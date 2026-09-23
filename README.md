@@ -152,19 +152,35 @@
 - 템플릿 HTML의 `href`, `src` 속성을 `th:href="@{...}"`, `th:src="@{...}"` 표현식으로 교체해 스프링 부트 정적 자원 경로와 연결
 - 컨트롤러(`/index`)와 연결되는 `index.html`을 위 방식으로 재구성하여 실제 포트폴리오 페이지 형태의 메인 화면 완성
 - 컨트롤러를 거치지 않고 URL로 바로 접근해야 하는 상세 페이지(`detailed_web.html`)는 `public` 폴더에 배치
+- `<head>`에서 연동하는 외부 리소스 확인
+  - Google Fonts: DM Sans (폰트)
+  - `bootstrap.min.css` + `bootstrap-icons.css` (레이아웃/아이콘, 5.1.3 버전)
+  - `magnific-popup.css` (이미지 팝업, jQuery 기반 플러그인)
+  - `templatemo-first-portfolio-style.css` (사이트 고유 디자인)
 
-### 5. 기존 파일 백업
+### 5. 네비게이션 바 & 상세 페이지 링크
+
+- 상단 고정 nav에 `#section_1`~`#section_5` 앵커로 각 섹션 이동 링크 구성
+- `click-scroll.js`가 앵커(`#`) 클릭 시 페이지 전환 없이 해당 위치로 부드럽게 스크롤 이동시켜줌
+- 상세 페이지로 나가는 링크는 `target="_blank" rel="noopener noreferrer"` 속성을 사용
+
+| 값 | 역할 |
+|---|---|
+| `noopener` | 새로 열린 페이지가 `window.opener`로 원래 페이지를 조작하지 못하게 차단 (피싱 사이트 전환 등 악용 방지) |
+| `noreferrer` | 이동한 페이지에 어디서 왔는지(Referer 헤더)를 넘기지 않음, `noopener` 효과도 포함 |
+
+### 6. 기존 파일 백업
 
 - 새 내용으로 덮어쓰기 전, 기존 `index.html`, `hello.html`, `hello2.html`을 "-복사본" 이름으로 복사해두어 이전 버전을 보존하는 방식 실습
 
-### 6. 프로필 커스터마이징
+### 7. 프로필 커스터마이징
 
 - Hero 섹션의 이름/소개 문구, 프로필 이미지(`profile.png`)를 본인 정보로 교체
 - 기술(Services) 영역 4가지(웹/AI/보안/게임)를 한글로 번역하고 각 영역의 제목·설명 작성
 - [Bootstrap Icons](https://icons.getbootstrap.com/)에서 항목에 맞는 아이콘을 검색해 기존 아이콘과 교체 (예: AI → `bi-anthropic`)
 - 로컬 번들 CSS(5.1.3)에는 없는 최신 아이콘을 쓰기 위해 최신 Bootstrap Icons CDN 링크를 `<head>`에 추가로 연결
 
-### 7. 반응형/성능 확인
+### 8. 반응형/성능 확인
 
 - F12 개발자 모드 → 기기 툴바(Ctrl+Shift+M)로 모바일 화면 비율 확인
 - Lighthouse 리포트를 PC/모바일 각각 생성해 Performance 점수 차이와 원인 비교
@@ -244,6 +260,10 @@
   spring.jpa.show-sql=true
   ```
 - 정상 연결 시 터미널에 `HikariPool-1 - Start completed.` 로그 출력 확인
+- 정상 실행이 안 될 때 확인할 것 (트러블슈팅)
+  - 터미널에 출력되는 에러 메시지 우선 확인
+  - `application.properties`의 비밀번호, DB명 오타 여부
+  - `pom.xml`의 JPA 관련 의존성이 주석 처리된 채로 남아있는지 여부
 
 ### 3. VS Code MySQL 확장 모듈 활용
 
@@ -303,6 +323,23 @@ public class TestService {
     }
 }
 ```
+- `@Autowired`로 `TestRepository`를 직접 생성하지 않고 스프링 컨테이너로부터 주입받음 (의존성 주입, DI)
+  - 강한 결합 : 클래스가 필요한 객체를 직접 생성 → 구현이 바뀌면 사용하는 코드도 같이 수정해야 함
+  - 약한 결합(DI) : 스프링이 객체를 생성해서 주입 → 구현체를 교체해도 사용하는 코드는 그대로 유지 가능
+
+**`JpaRepository` 주요 제공 메서드**
+
+| 메서드 | 설명 |
+|---|---|
+| `findAll()` | 전체 조회 (`SELECT * FROM testdb`) |
+| `findById(ID id)` | PK로 1건 조회, 없으면 `Optional.empty()` |
+| `existsById(ID id)` | PK 존재 여부 확인 |
+| `count()` | 전체 행 개수 |
+| `save(S entity)` | 저장 (PK 없으면 INSERT, 있으면 UPDATE) |
+| `saveAll(Iterable<S>)` | 여러 건 저장 |
+| `deleteById(ID id)` | PK로 삭제 |
+| `delete(T entity)` | 엔티티로 삭제 |
+| `deleteAll()` | 전체 삭제 |
 
 **`DemoController.java`** (`/testdb` 매핑 추가)
 - 초기에는 `findByName("홍길동")`으로 단건 조회 → 이후 `findAll()`로 전체 목록 조회하도록 수정
@@ -337,3 +374,53 @@ public String getAllTestDBs(Model model) {
 - `README.md`에 이번 주 진행 상황 기록 (예 : "4주차 데이터베이스 연동 완료")
 - 변경 파일 add → commit → GitHub 원격 저장소로 push
 - 매 실습마다 소스 코드를 지속적으로 커밋/업데이트
+
+## 실습 (4주차 연습문제 : 사용자 정보 수정 및 출력하기)
+
+### 연습문제 요구사항
+
+1. `TestDB` 엔티티에 나이, 성별 컬럼 추가
+2. VS Code MySQL 확장을 이용해 각 사용자의 나이/성별 정보를 DB에 직접 추가
+3. `testdb.html`을 수정해 아이디/이름/나이/성별을 모두 출력
+
+### 구현 내용
+
+**`TestDB.java` (컬럼 추가)**
+```java
+@Column(nullable = true)
+private Integer age;
+
+@Column(nullable = true)
+private String gender;
+```
+
+**DB 데이터 추가**
+- VS Code MySQL 확장에서 `testdb` 테이블에 `INSERT`로 사용자별 이름/나이/성별 직접 입력
+
+**`testdb.html` (헤더 행 + 컬럼 추가)**
+- `th:each` 반복 행 위에 고정된 헤더 행(`<th>`)을 추가해 각 열이 무엇인지 표시
+- `age`, `gender` 컬럼을 `<td>`로 추가 출력
+```html
+<table border="1">
+    <tr>
+        <th>아이디</th>
+        <th>이름</th>
+        <th>나이</th>
+        <th>성별</th>
+    </tr>
+    <tr th:each="user : ${users}">
+        <td th:text="${user.id}"></td>
+        <td th:text="${user.name}"></td>
+        <td th:text="${user.age}"></td>
+        <td th:text="${user.gender}"></td>
+    </tr>
+</table>
+```
+
+### 실행 및 확인 방법
+
+1. 서버 실행 후 `http://localhost:8080/testdb` 접속
+2. 아이디 / 이름 / 나이 / 성별 4개 컬럼이 헤더와 함께 전체 사용자 수만큼 출력되는지 확인
+
+### 실행/수정 상태
+- `TestDB.java`, `testdb.html`, DB 데이터 추가 : 실행/수정 완료
