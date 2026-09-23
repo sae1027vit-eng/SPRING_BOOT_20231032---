@@ -1,4 +1,20 @@
-# 자바웹프로그래밍(2) - 2주차
+# 자바웹프로그래밍(2) 수업 정리
+
+> 강사: 최도현 · 주차별 수업 내용과 실습 진행 기록
+
+## 목차
+
+| 주차 | 주제 |
+|---|---|
+| [🟦 2주차](#week2) | 스프링 부트 개발환경 설정 및 테스트 |
+| [🟩 3주차](#week3) | 정적 리소스(Static Resources) 처리와 외부 웹 템플릿 적용 |
+| [🟧 4주차](#week4) | 데이터베이스(MySQL) 연동 및 JPA를 통한 CRUD 테스트 |
+
+<br>
+
+<a id="week2"></a>
+
+# 🟦 2주차 — 스프링 부트 개발환경 설정 및 테스트
 
 - 강의: 자바웹프로그래밍(2) (강사: 최도현)
 - 주제: 스프링 부트 개발환경 설정 및 테스트
@@ -93,7 +109,9 @@
 
 ---
 
-# 자바웹프로그래밍(2) - 3주차
+<a id="week3"></a>
+
+# 🟩 3주차 — 정적 리소스(Static Resources) 처리와 외부 웹 템플릿 적용
 
 - 강의: 자바웹프로그래밍(2) (강사: 최도현)
 - 주제: 정적 리소스(Static Resources) 처리와 외부 웹 템플릿 적용
@@ -138,3 +156,184 @@
 ### 5. 기존 파일 백업
 
 - 새 내용으로 덮어쓰기 전, 기존 `index.html`, `hello.html`, `hello2.html`을 "-복사본" 이름으로 복사해두어 이전 버전을 보존하는 방식 실습
+
+### 6. 프로필 커스터마이징
+
+- Hero 섹션의 이름/소개 문구, 프로필 이미지(`profile.png`)를 본인 정보로 교체
+- 기술(Services) 영역 4가지(웹/AI/보안/게임)를 한글로 번역하고 각 영역의 제목·설명 작성
+- [Bootstrap Icons](https://icons.getbootstrap.com/)에서 항목에 맞는 아이콘을 검색해 기존 아이콘과 교체 (예: AI → `bi-anthropic`)
+- 로컬 번들 CSS(5.1.3)에는 없는 최신 아이콘을 쓰기 위해 최신 Bootstrap Icons CDN 링크를 `<head>`에 추가로 연결
+
+### 7. 반응형/성능 확인
+
+- F12 개발자 모드 → 기기 툴바(Ctrl+Shift+M)로 모바일 화면 비율 확인
+- Lighthouse 리포트를 PC/모바일 각각 생성해 Performance 점수 차이와 원인 비교
+
+## 실습 (3주차 연습문제 : 포트폴리오 수정하기)
+
+### 연습문제 요구사항
+
+1. 기술(Services) 4가지 영역의 아이콘을 웹을 제외하고 모두 목적에 맞는 아이콘으로 교체
+2. 각 기술(웹/AI/보안/게임)의 상세 페이지를 `detailed_web.html`을 재활용해 추가로 제작
+
+### 구현 내용
+
+**아이콘 교체**
+- 웹(Web) : 기본 `bi-globe` 유지
+- 인공지능(AI) : `bi-anthropic`
+- 보안(Security) : `bi-shield-fill-check`
+- 게임(Game) : `bi-controller`
+
+**상세 페이지 추가 (신규)**
+- `detailed_web.html`의 구조(고정 네비 + 페이지 헤더 + 요약 숫자 + 기술 스택 카드 + 숙련도/진행방식 + 푸터)를 그대로 재사용해 3개 페이지를 `public` 폴더에 추가 제작
+  - `detailed_ai.html` : 머신러닝/딥러닝, LLM & 프롬프트 엔지니어링, 데이터 처리, AI 서비스 연동
+  - `detailed_security.html` : 웹 보안, 인증/인가, 취약점 분석, 보안 운영
+  - `detailed_game.html` : 게임 클라이언트(Unity), 게임 서버/네트워크, 게임 기획/디자인, 데이터/배포
+- `index.html`의 각 서비스 카드 `th:href="@{/detailed_xxx.html}"` 링크와 실제 생성한 파일명을 일치시킴
+- 컨트롤러 등록 없이 `public` 폴더 배치만으로 URL 직접 접근되는 정적 페이지로 동작
+
+### 실행 및 확인 방법
+
+1. 서버 실행 후 `http://localhost:8080/` 접속
+2. 기술(Services) 섹션에서 웹/AI/보안/게임 각 카드의 "Discover More" 클릭
+3. `/detailed_web.html`, `/detailed_ai.html`, `/detailed_security.html`, `/detailed_game.html` 4개 페이지 모두 정상 응답(200) 및 디자인 일관성 확인
+
+### 실행/수정 상태
+- 아이콘 교체, 상세 페이지 4종 : 실행/수정 완료
+
+---
+
+<a id="week4"></a>
+
+# 🟧 4주차 — 데이터베이스(MySQL) 연동 및 JPA를 통한 CRUD 테스트
+
+- 강의: 자바웹프로그래밍(2) (강사: 최도현)
+- 주제: 데이터베이스(MySQL) 연동 및 JPA를 통한 CRUD 테스트
+
+## 수업 내용 정리
+
+### 1. JPA(Java Persistence API)와 영속성
+
+- **JPA** : 자바 객체(엔티티)와 DB 테이블을 매핑(ORM)해주는 표준 API, SQL을 대신 생성해 메서드 호출만으로 DB를 제어
+- **영속성(Persistence)** : 객체가 프로그램 종료 이후에도 DB에 저장되어 유지되는 성질
+- **엔티티 매니저** : Repository 내부에서 영속성 컨텍스트를 자동 관리, 트랜잭션 처리 복잡성 감소
+- 대표 구현체(ORM) : **하이버네이트(Hibernate)**
+
+### 2. MySQL 연동 설정
+
+- `pom.xml`에 주석 처리되어 있던 JPA 의존성 활성화
+  ```xml
+  <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-jpa</artifactId>
+  </dependency>
+  ```
+- MySQL 연결 드라이버(`mysql-connector-j`)는 JPA에 기본 포함되어 있지 않아 별도 의존성으로 추가
+- MySQL 서버 설치(Server only) 후 Command Line Client로 접속해 데이터베이스 생성
+  ```sql
+  create database spring;
+  flush privileges;
+  ```
+- `application.properties`에 접속 정보 및 JPA 옵션 추가
+  ```properties
+  spring.datasource.url=jdbc:mysql://localhost:3306/spring?serverTimezone=Asia/Seoul
+  spring.datasource.username=root
+  spring.datasource.password=비밀번호
+  spring.datasource.driver-class-name=com.mysql.cj.jdbc.Driver
+  spring.jpa.hibernate.ddl-auto=update
+  spring.jpa.show-sql=true
+  ```
+- 정상 연결 시 터미널에 `HikariPool-1 - Start completed.` 로그 출력 확인
+
+### 3. VS Code MySQL 확장 모듈 활용
+
+- 확장 검색(`mysql`) 후 설치, 좌측 Database 패널에서 서버 연결 정보(호스트, 포트 3306, 계정, DB명) 입력 후 연결
+- 트리에서 Tables / Views / Functions / Procedures 확인 가능
+- 테이블 우클릭 → SQL Template(SELECT/INSERT/UPDATE/DELETE), Dump Struct(And Data), Import SQL 등으로 백업/복원 가능
+- 상단 "Open in terminal"로 해당 DB에 바로 접속된 `mysql>` 터미널 실행 가능
+
+### 4. 계층형 패키지 구조로 변경
+
+- 단일 패키지(`demo`)를 MVC + Service/Repository 계층으로 세분화
+  - `controller` : 요청/응답 흐름 제어 (기존 `DemoController.java` 이동)
+  - `model/domain` : 엔티티 클래스 (DB 테이블 구조)
+  - `model/repository` : DB 접근(쿼리) 인터페이스
+  - `model/service` : 비즈니스 로직(중간 데이터 가공)
+  - `templates` : View, 기존 위치 그대로 유지
+- 요청 처리 흐름 : `Controller → Service → Repository → JPA(Hibernate) → MySQL`
+
+### 5. 테스트 엔티티 · 리포지토리 · 서비스 · 컨트롤러 · 뷰 구현
+
+**`TestDB.java` (엔티티)**
+```java
+@Entity
+@Table(name = "testdb")
+@Data
+public class TestDB {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(nullable = true)
+    private String name;
+}
+```
+
+**`TestRepository.java`**
+```java
+@Repository
+public interface TestRepository extends JpaRepository<TestDB, Long> {
+    TestDB findByName(String name);
+}
+```
+
+**`TestService.java`**
+```java
+@Service
+public class TestService {
+    @Autowired
+    private TestRepository testRepository;
+
+    public TestDB findByName(String name) {
+        return testRepository.findByName(name);
+    }
+
+    public List<TestDB> findAll() {
+        return testRepository.findAll();
+    }
+}
+```
+
+**`DemoController.java`** (`/testdb` 매핑 추가)
+- 초기에는 `findByName("홍길동")`으로 단건 조회 → 이후 `findAll()`로 전체 목록 조회하도록 수정
+```java
+@GetMapping("/testdb")
+public String getAllTestDBs(Model model) {
+    List<TestDB> users = testService.findAll();
+    model.addAttribute("users", users);
+    return "testdb";
+}
+```
+
+**`testdb.html` (신규)**
+- `th:each`로 `users` 리스트를 순회하며 테이블로 출력
+```html
+<table border="1">
+    <tr th:each="user : ${users}">
+        <td th:text="${user.id}"></td>
+        <td th:text="${user.name}"></td>
+    </tr>
+</table>
+```
+- 서버 재시작 시 엔티티 기준으로 `testdb` 테이블이 자동 생성됨(`ddl-auto=update`)
+
+### 6. 데이터 확인
+
+- VS Code MySQL 확장의 SQL Template(INSERT)로 `testdb` 테이블에 데이터 직접 추가
+- `localhost:8080/testdb` 접속해 등록한 데이터가 화면에 출력되는지 확인
+
+### 7. Git 연동
+
+- `README.md`에 이번 주 진행 상황 기록 (예 : "4주차 데이터베이스 연동 완료")
+- 변경 파일 add → commit → GitHub 원격 저장소로 push
+- 매 실습마다 소스 코드를 지속적으로 커밋/업데이트
