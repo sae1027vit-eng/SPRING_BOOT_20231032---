@@ -9,6 +9,7 @@
 | [🟦 2주차](#week2) | 스프링 부트 개발환경 설정 및 테스트 |
 | [🟩 3주차](#week3) | 정적 리소스(Static Resources) 처리와 외부 웹 템플릿 적용 |
 | [🟧 4주차](#week4) | 데이터베이스(MySQL) 연동 및 JPA를 통한 CRUD 테스트 |
+| [🟨 5주차](#week5) | 로그인/로그아웃 구현과 비밀번호 암호화 (Spring Security) |
 
 <br>
 
@@ -424,3 +425,169 @@ private String gender;
 
 ### 실행/수정 상태
 - `TestDB.java`, `testdb.html`, DB 데이터 추가 : 실행/수정 완료
+
+---
+
+<a id="week5"></a>
+
+# 🟨 5주차 — 로그인/로그아웃 구현과 비밀번호 암호화 (Spring Security)
+
+- 강의: 자바웹프로그래밍(2) (강사: 최도현)
+- 주제: 로그인/로그아웃 구현과 비밀번호 암호화(BCrypt)
+
+## 수업 내용 정리
+
+### 1. 웹 보안과 인증
+
+- 해킹의 시작은 대부분 "로그인" → OWASP Top 10(2025) 중 **A01 접근 제어 실패**, **A07 인증 실패**가 오늘 주제와 직결
+- **인증(Authentication)** : "너 누구야?" (로그인 = 아이디 + 비밀번호 확인)
+- **인가(Authorization)** : "너 이거 해도 돼?" (권한, 6주차 예정)
+
+### 2. 비밀번호 저장 방식
+
+- 비밀번호 평문 저장 금지 (개인정보 안전성 확보조치 기준) → 반드시 **일방향 해시**로 저장
+- **암호화 vs 해시**
+  - 암호화 : 복호화 가능 (키가 유출되면 끝)
+  - 해시 : 비밀번호 + 솔트(SALT)를 결합해 계산, 복호화 불가능
+- **BCrypt** : 매번 무작위 솔트(22자) 자동 생성 → 같은 비밀번호도 저장할 때마다 다른 해시값 생성, 일부러 느리게 설계되어 무차별 대입(brute-force) 공격 방어
+- MD5, SHA-1은 대입 공격에 취약 → 비밀번호 저장용으로는 BCrypt, Argon2 등을 사용
+
+### 3. 세션 기반 로그인
+
+- 오늘 실습은 **세션(Session)** 방식 : 서버가 로그인 상태를 저장하고, 브라우저는 세션 ID가 담긴 `JSESSIONID` 쿠키만 보관 (전통적인 Thymeleaf/JSP 웹사이트 방식)
+- 토큰(JWT), 소셜 로그인(OAuth2), 패스키 방식은 이후 주차(7주차~)에서 다룸
+
+### 4. Spring Security 의존성 추가
+
+- `pom.xml`에 의존성 2개 추가
+  ```xml
+  <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-security</artifactId>
+  </dependency>
+  <dependency>
+      <groupId>org.thymeleaf.extras</groupId>
+      <artifactId>thymeleaf-extras-springsecurity6</artifactId>
+  </dependency>
+  ```
+- 의존성 추가만으로 **모든 페이지(메인, CSS 포함)가 로그인 필수로 잠김** (스프링 시큐리티는 기본이 전부 잠금)
+- 별도 계정을 만들기 전까지는, 서버 시작 시 콘솔에 찍히는 `Using generated security password: ...` 문구로 임시 로그인 가능 (아이디 `user`, 비밀번호는 재시작마다 랜덤 생성 — 개발용 전용, 프로덕션에서는 사용 불가)
+
+### 5. 필터 체인과 SecurityConfig
+
+- **필터(Filter) 기반 보안** : 요청이 `DispatcherServlet`(컨트롤러)에 도달하기 전에 여러 보안 필터가 체인(사슬)처럼 연결되어 검사 (`CsrfFilter`, `UsernamePasswordAuthenticationFilter`, `LogoutFilter`, `AuthorizationFilter` 등) → 조건을 통과 못 하면 로그인 화면(302) 또는 거부(403)
+- `config` 패키지를 새로 만들고 `SecurityConfig.java` 작성
+  ```java
+  @Configuration
+  @EnableWebSecurity
+  public class SecurityConfig {
+
+      @Bean
+      public PasswordEncoder passwordEncoder() {
+          return new BCryptPasswordEncoder();
+      }
+
+      @Bean
+      public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+          http
+              .authorizeHttpRequests(auth -> auth
+                  .requestMatchers("/", "/hello", "/detailed_web.html",
+                          "/login", "/signup", "/error").permitAll()
+                  .requestMatchers("/css/**", "/js/**", "/images/**", "/fonts/**").permitAll()
+                  .anyRequest().authenticated())
+              .formLogin(form -> form
+                  .loginPage("/login")
+                  .defaultSuccessUrl("/")
+                  .failureUrl("/login?error")
+                  .permitAll())
+              .logout(logout -> logout
+                  .logoutUrl("/logout")
+                  .logoutSuccessUrl("/login?logout")
+                  .invalidateHttpSession(true)
+                  .deleteCookies("JSESSIONID", "remember-me"));
+          return http.build();
+      }
+  }
+  ```
+
+| 설정 | 의미 |
+|---|---|
+| `permitAll()` | 누구나 접근 (메인, 상세 페이지, 로그인, 가입) |
+| `/css/**` 등 permitAll | 정적 리소스 허용 (빠지면 디자인 깨짐) |
+| `anyRequest().authenticated()` | 나머지 전부 로그인 필요 (예: `/testdb`) |
+| `loginPage("/login")` | 기본 로그인 화면 대신 직접 만든 로그인 화면 사용 |
+| `defaultSuccessUrl("/")` | 로그인 성공 시 메인으로 (원래 가려던 페이지가 있으면 그쪽 우선) |
+| `logoutUrl("/logout")` | 로그아웃 처리 URL (CSRF 보호로 POST만 가능, GET 직접 입력은 동작 안 함) |
+
+- `authorizeHttpRequests`는 **위에서부터 순서대로** 검사, `anyRequest()`는 항상 마지막에 위치
+- 스프링 시큐리티 7.x부터 `.and()`로 이어 쓰는 방식이 제거되어 람다 DSL(`auth -> auth...`)로만 작성
+
+### 6. 회원 관련 계층 구조 추가
+
+- `config` : 보안 설정 (`SecurityConfig`)
+- `model/dto` : 화면 ↔ 컨트롤러 데이터 (`MemberForm`)
+- `model/domain/Member.java` (엔티티)
+  ```java
+  @Entity
+  @Table(name = "member")
+  @Data
+  public class Member {
+      @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
+      private Long id;
+      @Column(nullable = false, unique = true, length = 50)
+      private String username; // 로그인 아이디, 중복 불가
+      @Column(nullable = false)
+      private String password; // BCrypt 암호화 값(60자)
+      @Column(nullable = false, length = 50)
+      private String name;
+      @Column(nullable = false, length = 20)
+      private String role; // USER (6주차 ADMIN)
+  }
+  ```
+- `MemberRepository` : `findByUsername`, `existsByUsername` — 메서드 이름 규칙만 지키면 JPA가 SQL을 자동 생성
+- `MemberForm` (DTO) : `username`, `password`, `passwordConfirm`, `name`만 보유 — 엔티티를 화면에 직접 쓰지 않는 이유는 `role` 같은 민감한 필드를 사용자가 임의로 조작해 전송하는 것을 막기 위함
+- `MemberService`
+  - `signup(MemberForm form)` : 아이디 중복 확인(`existsByUsername`) → `passwordEncoder.encode()`로 BCrypt 암호화 → `role = "USER"` 기본값으로 저장(`save`)
+  - `implements UserDetailsService`, `loadUserByUsername(String username)` : 로그인 시 스프링 시큐리티가 자동 호출하는 메서드, DB에서 회원을 조회해 시큐리티용 `UserDetails` 객체로 변환해 반환. 비밀번호 일치 여부 비교는 직접 구현하지 않고 시큐리티가 `PasswordEncoder.matches()`로 내부에서 처리 (고정 시간 비교로 타이밍 공격 방지, 계정 존재 여부도 응답 시간 차이로 노출되지 않도록 처리)
+- `MemberController` : `GET /login`(로그인 화면), `GET /signup`(가입 화면), `POST /signup`(가입 처리 — 중복 아이디면 에러 메시지와 함께 입력값 유지한 채 가입 화면 재표시, 성공하면 로그인 화면으로 리다이렉트)
+
+### 7. Thymeleaf + Spring Security 연동 문법
+
+- `<html>` 태그에 `xmlns:sec="http://www.thymeleaf.org/extras/spring-security"` 네임스페이스 선언 필요
+- `sec:authorize="isAnonymous()"` / `"isAuthenticated()"` : 로그인 상태에 따라 해당 태그를 출력하거나 완전히 제거
+- `sec:authentication="name"` : 로그인한 사용자의 아이디(username)를 출력
+  ```html
+  <a sec:authorize="isAnonymous()" th:href="@{/login}">로그인</a>
+  <div sec:authorize="isAuthenticated()">
+      <span sec:authentication="name"></span>님
+  </div>
+  ```
+- `index.html` 네비게이션(모바일/PC 모두)에 로그인 전(로그인/회원가입 버튼) · 로그인 후(아이디님 + 로그아웃) 분기 적용, 회원 전용 페이지(`/testdb`)로 가는 "회원목록" 메뉴 추가
+
+### 8. 로그인/로그아웃 동작 확인
+
+- 로그인 성공 시 세션에 인증 정보 저장, 브라우저에는 `JSESSIONID` 쿠키만 발급 (F12 → Application → Cookies에서 확인)
+- 비로그인 상태로 인증이 필요한 페이지(`/testdb`)에 접근하면 로그인 화면으로 이동 → 로그인 성공 시 원래 가려던 페이지로 자동 복귀
+- 로그아웃은 CSRF 보호 때문에 주소창에 `/logout`을 직접 입력(GET)해서는 동작하지 않고, 반드시 POST 폼으로만 처리됨
+
+### 9. Git 연동과 비밀번호 보호
+
+- `application.properties`에 DB 계정 정보(아이디/비밀번호)를 그대로 두고 커밋하면 원격 저장소에 비밀번호가 그대로 노출됨
+- 계정 정보를 `application-secret.properties` 파일로 분리
+  ```properties
+  spring.datasource.username=root
+  spring.datasource.password=비밀번호
+  ```
+- `application.properties`에는 아래 한 줄만 추가해 분리된 설정을 불러옴 (`optional:` 접두사 → 해당 파일이 없어도 앱은 정상 실행)
+  ```properties
+  spring.config.import=optional:application-secret.properties
+  ```
+- `.gitignore`에 `application-secret.properties`를 추가해 커밋/업로드 대상에서 완전히 제외
+
+> **(강의 외 추가 조치)** 확인해보니 4주차 커밋에 DB 비밀번호가 이미 평문으로 push되어 있었음 → 히스토리를 다시 쓰는 대신 **DB 비밀번호 자체를 변경**하는 방법으로 무력화 (과거 커밋에 남은 값은 더 이상 유효하지 않은 비밀번호가 됨)
+
+### 실행/수정 상태
+
+- `pom.xml`, `SecurityConfig.java`, `Member.java`, `MemberRepository.java`, `MemberForm.java`, `MemberService.java`, `MemberController.java`, `login.html`, `signup.html`, `index.html` 네비게이션 : 실행/수정 완료
+- 실제 회원가입 → BCrypt 해시로 DB 저장 확인, `application-secret.properties` 분리 및 DB 비밀번호 변경 완료
+- 5주차 연습문제(로그인 상태 유지 `remember-me`, 회원가입 비밀번호 확인 검증)는 진행 예정
