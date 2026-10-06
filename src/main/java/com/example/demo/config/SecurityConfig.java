@@ -34,7 +34,10 @@ public class SecurityConfig {
                 .logoutUrl("/logout") // 로그아웃 처리 URL (POST)
                 .logoutSuccessUrl("/login?logout") // 로그아웃 후 이동
                 .invalidateHttpSession(true) // 세션 삭제
-                .deleteCookies("JSESSIONID", "remember-me")); // 쿠키 삭제
+                .deleteCookies("JSESSIONID", "remember-me")) // 쿠키 삭제
+            .rememberMe(remember -> remember // 4. 로그인 상태 유지 (연습문제)
+                .key("portfolio-remember-me-key") // 쿠키 위변조 방지용 비밀키
+                .tokenValiditySeconds(60 * 60 * 24 * 7)); // 유지 기간 : 7일
         return http.build();
     }
 }

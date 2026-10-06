@@ -20,6 +20,9 @@ public class MemberService implements UserDetailsService { // 로그인을 위�
         if (memberRepository.existsByUsername(form.getUsername())) {
             throw new IllegalArgumentException("이미 사용 중인 아이디입니다.");
         }
+        if (form.getPassword() == null || !form.getPassword().equals(form.getPasswordConfirm())) {
+            throw new IllegalArgumentException("비밀번호가 일치하지 않습니다."); // DB 저장 전에 차단
+        }
         Member member = new Member();
         member.setUsername(form.getUsername());
         member.setPassword(passwordEncoder.encode(form.getPassword())); // ★ 암호화

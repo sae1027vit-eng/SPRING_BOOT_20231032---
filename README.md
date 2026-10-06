@@ -590,4 +590,70 @@ private String gender;
 
 - `pom.xml`, `SecurityConfig.java`, `Member.java`, `MemberRepository.java`, `MemberForm.java`, `MemberService.java`, `MemberController.java`, `login.html`, `signup.html`, `index.html` 네비게이션 : 실행/수정 완료
 - 실제 회원가입 → BCrypt 해시로 DB 저장 확인, `application-secret.properties` 분리 및 DB 비밀번호 변경 완료
-- 5주차 연습문제(로그인 상태 유지 `remember-me`, 회원가입 비밀번호 확인 검증)는 진행 예정
+## 실습 (5주차 연습문제 : 로그인 기능 개선하기)
+
+### 연습문제 요구사항
+
+1. 로그인 상태 유지(`remember-me`) : `SecurityConfig`의 로그아웃 설정 뒤에 `.rememberMe()` 추가 (`key("비밀키")`, `tokenValiditySeconds(7일)`), 브라우저 종료 후 재접속해도 로그인 유지
+2. 비밀번호 확인 검증 : `signup()`에서 `password`와 `passwordConfirm`을 비교, 다르면 "비밀번호가 일치하지 않습니다." 출력하고 DB에 저장하지 않을 것
+
+### 구현 내용
+
+**`SecurityConfig.java` (remember-me 추가)**
+```java
+.logout(logout -> logout
+    ...
+    .deleteCookies("JSESSIONID", "remember-me"))
+.rememberMe(remember -> remember // 4. 로그인 상태 유지
+    .key("portfolio-remember-me-key") // 쿠키 위변조 방지용 비밀키
+    .tokenValiditySeconds(60 * 60 * 24 * 7)); // 유지 기간 : 7일
+```
+- `login.html`의 체크박스(`name="remember-me"`)를 체크하고 로그인하면 `remember-me` 쿠키가 7일 유효기간으로 발급됨
+- 이 쿠키는 `MemberService`(`UserDetailsService`)로 사용자를 다시 조회해 로그인 상태를 복원 (세션이 사라져도 유지)
+- `.logout()`의 `deleteCookies("JSESSIONID", "remember-me")`가 이미 있어 로그아웃 시 `remember-me` 쿠키도 삭제됨
+
+**`MemberService.java` (비밀번호 확인 검증 추가)**
+```java
+public Member signup(MemberForm form) {
+    if (memberRepository.existsByUsername(form.getUsername())) {
+        throw new IllegalArgumentException("이미 사용 중인 아이디입니다.");
+    }
+    if (form.getPassword() == null || !form.getPassword().equals(form.getPasswordConfirm())) {
+        throw new IllegalArgumentException("비밀번호가 일치하지 않습니다."); // DB 저장 전에 차단
+    }
+    ...
+    return memberRepository.save(member);
+}
+```
+- 비교를 `save()` 이전에 하므로 불일치 시 DB에 저장되지 않음
+- `MemberController.signup()`의 기존 `catch (IllegalArgumentException e)`가 메시지를 `${error}`로 전달 → `signup.html`에 빨간 경고창으로 출력 (컨트롤러·화면 수정 없음)
+
+### 실행 및 확인 방법
+
+1. 서버 실행 후 `http://localhost:8080/signup` 접속
+2. 비밀번호와 비밀번호 확인을 다르게 입력해 가입 → "비밀번호가 일치하지 않습니다." 표시, 해당 아이디로 로그인 불가(DB 미저장)
+3. 같게 입력해 가입 → 로그인 화면으로 이동
+4. "로그인 상태 유지" 체크 후 로그인 → F12 → Application → Cookies에서 `remember-me` 쿠키 확인 (Expires 약 7일 뒤)
+5. `JSESSIONID`를 지우거나 브라우저를 종료한 뒤 재접속해도 로그인 유지(`/testdb` 접근 가능), 체크하지 않으면 `remember-me` 쿠키가 발급되지 않음
+
+### 확인 결과
+
+| 시나리오 | 결과 |
+|---|---|
+| 비밀번호 불일치 가입 | 가입 화면 재표시 + "비밀번호가 일치하지 않습니다." 출력 |
+| 불일치 가입한 아이디로 로그인 | `/login?error` (DB에 저장되지 않음) |
+| 비밀번호 일치 가입 | `/login?signup` 으로 이동 (정상 가입) |
+| 상태 유지 체크 로그인 | `remember-me` 쿠키 발급, 유효기간 604,800초(7일) |
+| `remember-me` 쿠키만으로 재접속 (세션 쿠키 없음) | 로그아웃 버튼 표시, `/testdb` 200 (로그인 유지) |
+| 상태 유지 미체크 로그인 | `remember-me` 쿠키 없음 |
+
+### 참고 : 실행 중 겪은 문제
+
+- 다른 PC에서 DB 비밀번호를 변경해, 이 PC의 `application-secret.properties`와 맞지 않아 `Access denied for user 'root'` 오류 발생 → 이 PC의 DB 비밀번호에 맞게 파일 수정 (`.gitignore` 대상이라 커밋되지 않음)
+- 이 PC의 DB에는 `member` 테이블이 없어 서버 시작 시 `ddl-auto=update`로 자동 생성됨
+- `mvnw spring-boot:run` 으로 실행했을 때 DevTools 재시작 클래스로더 때문에 `Found 0 JPA repository interfaces` → `TestRepository` 빈을 찾지 못하는 오류 발생. `-Dspring.devtools.restart.enabled=false` 로 실행하면 정상 (VS Code에서 실행 시에는 해당 없음)
+
+### 실행/수정 상태
+
+- `SecurityConfig.java`(rememberMe), `MemberService.java`(비밀번호 확인 검증) : 실행/수정 완료
+- 5주차 연습문제 2개 모두 서버 실행 후 동작 확인 완료
