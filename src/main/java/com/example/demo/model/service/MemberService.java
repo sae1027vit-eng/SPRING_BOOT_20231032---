@@ -5,6 +5,7 @@ import java.util.List;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Sort;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.context.SecurityContextHolder;
 // User, UserDetails 등
 import org.springframework.security.core.userdetails.User;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -24,7 +25,7 @@ public class MemberService implements UserDetailsService { // 로그인을 위�
     @Autowired // SecurityConfig 에 등록한 BCryptPasswordEncoder 주입
     private PasswordEncoder passwordEncoder;
     // 관리자가 부여할 수 있는 권한 (화면에서 넘어온 값을 그대로 믿지 않는다)
-    private static final List<String> ROLES = List.of("USER", "ADMIN");
+    private static final List<String> ROLES = List.of("USER", "MANAGER", "ADMIN"); // [연습문제 ②] MANAGER 추가
 
     public Member signup(MemberForm form) { // 회원가입
         if (memberRepository.existsByUsername(form.getUsername())) {
@@ -71,6 +72,7 @@ public class MemberService implements UserDetailsService { // 로그인을 위�
         }
         Member member = memberRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("회원이 존재하지 않습니다."));
+        checkNotSelf(member); // [연습문제 ①] 본인 보호
         member.setRole(role);
         memberRepository.save(member); // UPDATE (id 가 있으면 수정)
     }
@@ -79,7 +81,16 @@ public class MemberService implements UserDetailsService { // 로그인을 위�
     public void deleteMember(Long id) { // 회원 삭제
         Member member = memberRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("회원이 존재하지 않습니다."));
+        checkNotSelf(member); // [연습문제 ①] 본인 보호
         memberRepository.delete(member); // DELETE
+    }
+
+    // [연습문제 ①] 대상이 로그인한 본인이면 거부 (관리자 0명 방지)
+    private void checkNotSelf(Member member) {
+        String loginUsername = SecurityContextHolder.getContext().getAuthentication().getName(); // 현재 로그인 아이디
+        if (member.getUsername().equals(loginUsername)) {
+            throw new IllegalArgumentException("자기 자신의 권한 변경·삭제는 할 수 없습니다.");
+        }
     }
 
 }

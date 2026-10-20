@@ -109,8 +109,8 @@ https://templatemo.com/tm-578-first-portfolio
                             <a class="nav-link click-scroll" href="#section_5">연락처</a>
                         </li>
 
-                        <!-- [5주차] 회원 전용 페이지 : 로그인하지 않으면 로그인 화면으로 이동 -->
-                        <li class="nav-item">
+                        <!-- [5주차] 회원 전용 페이지 / [연습문제 추가 도전] 관리자, 매니저에게만 메뉴 표시 -->
+                        <li class="nav-item" sec:authorize="hasAnyRole('ADMIN', 'MANAGER')">
                             <a class="nav-link" th:href="@{/testdb}">회원목록</a>
                         </li>
 

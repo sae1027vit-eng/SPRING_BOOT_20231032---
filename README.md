@@ -978,6 +978,107 @@ public void deleteMember(Long id) { ... }
 
 ### 실행/수정 상태
 
-- `SecurityConfig.java`(URL 권한 규칙, `@EnableMethodSecurity`), `AdminController.java`(신규), `MemberController.java`(`/mypage`), `MemberService.java`(조회·권한 변경·삭제, `@PreAuthorize`) : 수정 완료, 컴파일 확인
+- `SecurityConfig.java`(URL 권한 규칙, `@EnableMethodSecurity`), `AdminController.java`(신규), `MemberController.java`(`/mypage`), `MemberService.java`(조회·권한 변경·삭제, `@PreAuthorize`) : 실행/수정 완료
 - `admin/members.html`, `error/403.html`, `mypage.html` 추가, `index.html` 교체부분 ①~③ 반영 완료
 - `admin` 계정 생성 및 role `ADMIN` 변경 완료
+- 서버 실행 후 `/mypage`, `/admin/members` 접근(302/403/200), 권한 변경·삭제 동작 확인 완료
+
+## 실습 (6주차 연습문제 : 관리자 보호 & 매니저(MANAGER) 권한 추가하기)
+
+### 연습문제 요구사항
+
+1. 관리자 본인 보호 : 관리자가 자기 자신을 USER 로 바꾸거나 삭제하면 관리자가 0명이 될 수 있음 → `changeRole`, `deleteMember` 에서 대상이 본인이면 거부 (힌트 : `SecurityContextHolder ... getName()`)
+2. 매니저(MANAGER) 권한 추가 : 회원 관리에서 MANAGER 를 부여할 수 있게 하고, `/testdb` 는 ADMIN, MANAGER 만 접근 (USER 403, 힌트 : `hasAnyRole(...)`)
+3. (추가 도전) 회원목록 메뉴도 USER 에게 숨기기
+
+### 구현 내용
+
+**`MemberService.java` (① 본인 보호)**
+```java
+@PreAuthorize("hasRole('ADMIN')")
+public void changeRole(Long id, String role) {
+    ...
+    Member member = memberRepository.findById(id)
+            .orElseThrow(() -> new IllegalArgumentException("회원이 존재하지 않습니다."));
+    checkNotSelf(member); // [연습문제 ①] 본인 보호
+    member.setRole(role);
+    memberRepository.save(member);
+}
+
+@PreAuthorize("hasRole('ADMIN')")
+public void deleteMember(Long id) {
+    Member member = memberRepository.findById(id)
+            .orElseThrow(() -> new IllegalArgumentException("회원이 존재하지 않습니다."));
+    checkNotSelf(member); // [연습문제 ①] 본인 보호
+    memberRepository.delete(member);
+}
+
+// [연습문제 ①] 대상이 로그인한 본인이면 거부 (관리자 0명 방지)
+private void checkNotSelf(Member member) {
+    String loginUsername = SecurityContextHolder.getContext().getAuthentication().getName(); // 현재 로그인 아이디
+    if (member.getUsername().equals(loginUsername)) {
+        throw new IllegalArgumentException("자기 자신의 권한 변경·삭제는 할 수 없습니다.");
+    }
+}
+```
+- `SecurityContextHolder` : 컨트롤러가 아닌 서비스에서도 현재 로그인 사용자 정보를 꺼낼 수 있음 (`Principal` 파라미터 대신 사용)
+- 권한 변경·삭제 두 메서드가 같은 검사를 쓰므로 `checkNotSelf()` 로 분리
+- 예외 메시지는 기존 `AdminController` 의 `catch (IllegalArgumentException e)` 가 flash 메시지(`error`)로 전달 → 회원 관리 화면에 빨간 경고로 출력 (컨트롤러·화면 수정 없음)
+
+**`MemberService.java` (② 허용 권한에 MANAGER 추가)**
+```java
+private static final List<String> ROLES = List.of("USER", "MANAGER", "ADMIN"); // [연습문제 ②] MANAGER 추가
+```
+- 회원 관리 화면(`admin/members.html`)의 select 에는 MANAGER 가 이미 있으므로 화이트리스트만 수정
+
+**`SecurityConfig.java` (② `/testdb` 접근 제한)**
+```java
+.requestMatchers("/admin/**").hasRole("ADMIN") // [6주차] 관리자만
+.requestMatchers("/testdb").hasAnyRole("ADMIN", "MANAGER") // [연습문제 ②] 회원목록 : 관리자, 매니저만
+.anyRequest().authenticated()) // 나머지 : 로그인 필요
+```
+- `hasAnyRole(...)` : 나열한 역할 중 하나라도 있으면 통과 (`ROLE_` 은 자동으로 붙음)
+- `anyRequest()` 보다 반드시 위에 작성
+
+**`index.html` (추가 도전 : 회원목록 메뉴 숨기기)**
+```html
+<!-- [5주차] 회원 전용 페이지 / [연습문제 추가 도전] 관리자, 매니저에게만 메뉴 표시 -->
+<li class="nav-item" sec:authorize="hasAnyRole('ADMIN', 'MANAGER')">
+    <a class="nav-link" th:href="@{/testdb}">회원목록</a>
+</li>
+```
+- 메뉴 숨김(화면)은 편의일 뿐이고, 실제 차단은 `SecurityConfig` 의 URL 규칙이 담당
+
+### 실행 및 확인 방법
+
+1. 서버 실행 후 `admin` 으로 로그인 → 관리자 → 회원 관리
+2. 본인(admin) 행에서 권한을 USER 로 변경하거나 삭제 → "자기 자신의 권한 변경·삭제는 할 수 없습니다." 표시, DB 의 role 은 ADMIN 그대로
+3. 다른 회원의 권한을 MANAGER 로 변경 → "권한을 MANAGER (으)로 변경했습니다." 표시
+4. 해당 회원으로 **다시 로그인** → MANAGER 배지, 회원목록 메뉴 표시, `/testdb` 접근 가능, `/admin/members` 는 403
+5. USER 계정으로 로그인 → 회원목록 메뉴 숨김, `/testdb` 주소 직접 입력 시 403
+
+### 확인 결과
+
+| 시나리오 | 결과 |
+|---|---|
+| admin 이 자기 권한을 USER 로 변경 | "자기 자신의 권한 변경·삭제는 할 수 없습니다." 출력, DB 는 ADMIN 유지 |
+| admin 이 자기 자신을 삭제 | 같은 메시지로 거부 |
+| admin 이 다른 회원에게 MANAGER 부여 | "권한을 MANAGER (으)로 변경했습니다." 출력, DB 반영 |
+| DB 는 MANAGER, 재로그인 전 세션 | `/testdb` 403 (세션 권한은 여전히 `ROLE_USER`) |
+| MANAGER 가 권한 변경 요청(POST) 직접 전송 | 403 |
+
+| 주소 | USER | MANAGER | ADMIN | 비로그인 |
+|---|---|---|---|---|
+| `/mypage` | 200 | 200 | 200 | 302 → 로그인 |
+| `/testdb` (회원목록) | 403 | 200 | 200 | 302 → 로그인 |
+| `/admin/members` (회원 관리) | 403 | 403 | 200 | 302 → 로그인 |
+| 회원목록 메뉴 | 숨김 | 표시 | 표시 | 숨김 |
+
+### 참고 : 실행 중 겪은 문제
+
+- 테스트용 임시 계정을 만들어 USER/MANAGER 시나리오를 확인한 뒤, 관리자 회원 삭제 기능으로 다시 삭제 (기존 계정의 권한은 변경하지 않음)
+
+### 실행/수정 상태
+
+- `MemberService.java`(본인 보호 `checkNotSelf`, 허용 권한 MANAGER 추가), `SecurityConfig.java`(`/testdb` `hasAnyRole`), `index.html`(회원목록 메뉴 숨김) : 실행/수정 완료
+- 6주차 연습문제 2개 + 추가 도전 모두 서버 실행 후 동작 확인 완료
