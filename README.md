@@ -11,6 +11,7 @@
 | [🟧 4주차](#week4) | 데이터베이스(MySQL) 연동 및 JPA를 통한 CRUD 테스트 |
 | [🟨 5주차](#week5) | 로그인/로그아웃 구현과 비밀번호 암호화 (Spring Security) |
 | [🟥 6주차](#week6) | 권한(ROLE) 접근 제어와 관리자 페이지 분리 |
+| [🟪 7주차](#week7) | 회원 관리 REST API(JSON)와 Postman 테스트 |
 
 <br>
 
@@ -1082,3 +1083,360 @@ private static final List<String> ROLES = List.of("USER", "MANAGER", "ADMIN"); /
 
 - `MemberService.java`(본인 보호 `checkNotSelf`, 허용 권한 MANAGER 추가), `SecurityConfig.java`(`/testdb` `hasAnyRole`), `index.html`(회원목록 메뉴 숨김) : 실행/수정 완료
 - 6주차 연습문제 2개 + 추가 도전 모두 서버 실행 후 동작 확인 완료
+
+---
+
+<a id="week7"></a>
+
+# 🟪 7주차 — 회원 관리 REST API(JSON)와 Postman 테스트
+
+- 강의: 자바웹프로그래밍(2) (강사: 최도현)
+- 주제: 6주차 회원 관리 기능을 REST API(JSON)로 바꾸고 Postman 으로 테스트
+
+## 수업 내용 정리
+
+### 1. API 란?
+
+- **API** : 프로그램끼리 데이터(JSON)를 주고받는 약속 (요청 Request → 응답 Response)
+- 서버 1 : N 연동 — 웹, 모바일 앱, 스마트워치, AI 챗봇이 **같은 서버**를 사용 → 서버는 화면이 아니라 **데이터만** 응답
+  - 참고 : 6주차까지의 페이지는 완성된 화면(HTML)을 응답
+- 오픈 API 예 : 지도·길찾기, 간편결제, 소셜 로그인, 날씨, 공공데이터포털(버스 도착, 미세먼지)
+
+### 2. SSR 과 CSR
+
+| 구분 | SSR (6주차까지 우리 방식) | CSR (요즘 많이 쓰는 방식) |
+|---|---|---|
+| 서버가 보내는 것 | Thymeleaf 로 **완성한 HTML** | **JSON 데이터만** (REST API) |
+| 화면을 그리는 쪽 | 서버 | 브라우저·앱 (React, Vue 등) |
+
+- 실무는 두 방식을 혼용 : 관리자 화면은 Thymeleaf, 앱·외부 연동은 API → 오늘은 회원 관리를 API 로 구현
+- React(Next.js, React Native 로 앱까지, 생태계 가장 큼) vs Vue(Nuxt, 빠른 개발·중소 규모·일부 도입에 적합)
+
+### 3. REST 와 JSON
+
+- **REST** : API 설계 방식 — **주소(URL)는 무엇을, HTTP 메서드는 어떻게**
+  - GET 조회, POST 생성, PATCH 수정(일부), DELETE 삭제 (PUT 은 전체 교체)
+- **JSON** : 요청/응답 데이터 표준 형식, 사람도 읽기 쉽고 거의 모든 언어가 지원
+  - `{ }` 객체("이름": 값 의 묶음), `[ ]` 배열(여러 개 나열), 값(`"USER"`, `3`, `true`, `null`)
+
+| 구분 | 기존 페이지 (6주차까지) | API 통신 (7주차) |
+|---|---|---|
+| 주소 예 | `/admin/members` | `/api/admin/members` |
+| 요청 방식 | 링크 클릭, 폼 제출 (GET·POST) | fetch, 앱 요청 (GET·POST·PATCH·DELETE) |
+| 결과 확인 | 바뀐 화면을 눈으로 확인 | 상태 코드(200, 201, 404 …)로 판단 |
+| 페이지 이동 | 매번 새로고침 | 새로고침 없음, 필요한 부분만 바뀜 |
+
+### 4. `@Controller` vs `@RestController`
+
+- `@Controller` : **화면 이름**을 반환 → HTML 화면 (받는 쪽 : 사람/브라우저)
+- `@RestController` : **객체**를 반환 → 스프링이 **JSON 으로 자동 변환** (받는 쪽 : 앱·JS·Postman)
+- `@RestController` = `@Controller` + `@ResponseBody`
+
+### 5. 첫 번째 API - `/api/hello` (단계 1)
+
+**`MemberApiController.java` (신규)**
+```java
+@RestController // 화면(HTML) 대신 데이터(JSON)를 응답하는 컨트롤러
+@RequestMapping("/api") // 이 컨트롤러의 모든 URL 앞에 /api
+public class MemberApiController {
+    @Autowired
+    MemberService memberService;
+
+    @GetMapping("/hello") // 첫 번째 API : GET /api/hello (누구나)
+    public Map<String, Object> hello() {
+        // Map 을 반환하면 스프링이 JSON 으로 바꿔 준다
+        return Map.of("message", "안녕하세요, REST API!",
+                "time", LocalDateTime.now().withNano(0));
+    }
+}
+```
+- `SecurityConfig` 의 `authorizeHttpRequests` 블록 안에 `.requestMatchers("/api/hello").permitAll()` 추가
+- 결과 : `{"message":"안녕하세요, REST API!","time":"..."}` (크롬 Pretty-print 체크 → 정렬)
+
+### 6. 내 정보 API - `/api/me` 와 응답 DTO (단계 2·3)
+
+- 엔티티(`Member`)를 그대로 반환하면 → **비밀번호 해시(`$2a$10$...`)까지 JSON 으로 노출**
+  - 반환 객체의 **getter 가 있는 값은 전부** JSON 이 되기 때문
+  - 해시도 유출되면 공격에 쓰일 수 있음 (`1234` 같은 약한 비밀번호는 사전 목록·대입으로 금방 찾음), 목록 API 였다면 전원 유출
+- 해결 : 응답용 객체를 따로 만든다 → **응답 DTO** (필요한 값만 : id, 아이디, 이름, 권한)
+
+**`MemberResponse.java` (신규, `model/dto`)**
+```java
+// API 응답용 DTO : 화면(JSON)에 내보낼 값만 담는다 → password 는 빠진다
+public record MemberResponse(Long id, String username, String name, String role) {
+    public static MemberResponse from(Member member) { // 엔티티 → 응답 DTO 변환
+        return new MemberResponse(member.getId(), member.getUsername(),
+                member.getName(), member.getRole());
+    }
+}
+```
+- `record` (자바 16+) : 생성자·getter·equals 등을 자동으로 만들어 주는 간결한 데이터 클래스
+
+**`MemberApiController.java` (`/api/me` 추가)**
+```java
+@GetMapping("/me") // 내 정보 API : GET /api/me (로그인 필요)
+public MemberResponse me(Principal principal) { // 반환형 Member → MemberResponse
+    Member member = memberService.findByUsername(principal.getName());
+    return MemberResponse.from(member); // 엔티티 대신 DTO 반환
+}
+```
+
+| 구분 | Member (엔티티) | MemberForm (5주차 DTO) | MemberResponse (7주차 DTO) |
+|---|---|---|---|
+| 역할 | DB 저장용 | 들어오는 데이터 (요청) | **나가는 데이터 (응답)** |
+| 방향 | DB ↔ 서버 | 사용자 → 서버 | 서버 → 사용자 |
+| 담는 값 | id, username, password(해시), name, role 전부 | username, password, passwordConfirm, name | id, username, name, role |
+| 빠진 값 | 없음 | role | **password** |
+| 막는 공격 | — | 권한 조작 (role 을 ADMIN 으로 몰래 보내기) | **정보 노출 (비밀번호 해시 유출)** |
+
+- 6주차에는 Thymeleaf 가 서버 안에서 화면에 쓴 값만 출력해서 나가는 DTO 가 필요 없었지만, JSON 은 값이 전부 보이므로 필요
+
+### 7. Postman 과 Basic 인증 (단계 4)
+
+- **Postman** : API 를 호출해 보는 프로그램 (외부 앱처럼 요청 전송, 무료·가입 없이 사용)
+  - 메서드 + 주소 입력 → Send, Authorization · Body 설정, 응답 상태 코드·헤더·본문 확인
+  - Postman 이 없으면 : 브라우저 F12 → 네트워크(Network) 탭, curl
+- 문제 : Postman 으로 `/api/me` 를 호출하면 JSON 대신 **로그인 화면 HTML** (실제로는 302 → `/login`)
+  - 브라우저는 로그인 후 **세션 쿠키(`JSESSIONID`)** 를 항상 함께 보내지만, Postman 은 쿠키가 없음 → 로그인 안 된 상태
+  - 서버는 브라우저와 앱을 구분하지 않음
+
+| 구분 | 브라우저 (화면) | 앱 · Postman (API) |
+|---|---|---|
+| 인증 방법 | 로그인 한 번 → 세션 쿠키로 계속 인증 | **요청할 때마다** 인증 정보 전송 |
+| 로그인 안 했으면 | 302 → 로그인 화면 | **401 Unauthorized** |
+
+- **Basic 인증** : `아이디:비밀번호` 를 **Base64** 로 변환해 `Authorization: Basic ...` 헤더로 전송 (이후 주차에서는 JWT 토큰)
+  - Base64 는 데이터를 64가지 ASCII 문자로 표현하는 **인코딩**(전송 오류 방지)일 뿐 **암호화가 아님** → 실서비스는 HTTPS 필수
+- 401 "누구세요?" (인증 실패) / 403 "권한이 없어요" (인가 실패), 302 와 401 을 나누는 기준은 주소(`/api/`)
+
+**`SecurityConfig.java` (`.rememberMe(...)` 뒤에 이어서 추가, 앞 줄 끝의 `;` 를 지우고 작성)**
+```java
+// 5. [7주차] REST API 설정
+.httpBasic(Customizer.withDefaults()) // Postman : 요청마다 아이디·비밀번호 (Basic 인증)
+.csrf(csrf -> csrf.ignoringRequestMatchers("/api/**")) // JSON API 는 CSRF 토큰 검사 제외
+.exceptionHandling(ex -> ex.defaultAuthenticationEntryPointFor( // 로그인 안 한 API 요청 :
+        new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED), // 로그인 화면(302) 대신 401
+        request -> request.getRequestURI().startsWith("/api/")));
+```
+- 결과 : No Auth → 401(본문 없음), Basic `admin / 1234` → 200 + 내 정보, 비밀번호 틀림 → 401
+- 브라우저(로그인 상태)는 그대로 200, 일반 화면 페이지는 여전히 로그인 화면으로 이동
+
+### 8. REST 주소 규칙과 상태 코드
+
+- 6주차 화면은 GET·POST 만 사용 → 7주차는 **주소에 대상만, 할 일은 HTTP 메서드**로 (같은 주소라도 메서드가 다르면 다른 일)
+
+| 하고 싶은 일 | 6주차 화면 방식 | 7주차 REST 방식 |
+|---|---|---|
+| 회원 목록 보기 | `GET /admin/members` | `GET /api/admin/members` |
+| 회원 1명 보기 | (없음, 목록에서 봄) | `GET /api/admin/members/3` |
+| 회원 등록 | `POST /signup` | `POST /api/admin/members` |
+| 권한 변경 | `POST /admin/members/3/role` | `PATCH /api/admin/members/3/role` |
+| 회원 삭제 | `POST /admin/members/3/delete` | `DELETE /api/admin/members/3` |
+
+- API 응답 = **상태 코드 + 헤더 + 본문** → 숫자로 결과를 판단 (200번대 성공, 400번대 요청 쪽 문제)
+
+| 코드 | 의미 | 언제 |
+|---|---|---|
+| 200 OK | 성공 | 조회, 수정 성공 |
+| 201 Created | 새로 만들었음 | 등록 성공 |
+| 204 No Content | 성공, 돌려줄 내용 없음 | 삭제 성공 |
+| 400 Bad Request | 요청 내용이 잘못됨 | 빈 값, 중복 아이디, 허용 안 되는 권한 |
+| 401 Unauthorized | 누구인지 모름 | 로그인 정보 없음 |
+| 403 Forbidden | 권한 없음 | USER 가 관리자 API 호출 |
+| 404 Not Found | 대상이 없음 | 없는 회원 번호 조회 |
+
+- **`ResponseEntity`** : 상태 코드를 직접 정해서 응답
+```java
+ResponseEntity.ok(body)                  // 200
+ResponseEntity.created(uri).body(body)   // 201
+ResponseEntity.noContent().build()       // 204
+ResponseEntity.badRequest().body(error)  // 400
+ResponseEntity.notFound().build()        // 404
+```
+
+### 9. 관리자 API - 조회 (단계 5)
+
+**`AdminApiController.java` (신규)**
+```java
+@RestController // 관리자 회원 관리 API (JSON)
+@RequestMapping("/api/admin/members") // 주소는 하나, 할 일은 메서드로 구분
+public class AdminApiController {
+    @Autowired
+    MemberService memberService;
+
+    @GetMapping // 회원 목록 : GET /api/admin/members
+    public List<MemberResponse> list() {
+        List<Member> members = memberService.findAll();
+        return members.stream().map(MemberResponse::from).toList(); // 엔티티 목록 → DTO 목록
+    }
+
+    @GetMapping("/{id}") // 회원 1명 : GET /api/admin/members/3
+    public ResponseEntity<MemberResponse> get(@PathVariable Long id) {
+        return memberService.findById(id)
+                .map(member -> ResponseEntity.ok(MemberResponse.from(member))) // 있으면 200 OK
+                .orElse(ResponseEntity.notFound().build()); // 없으면 404
+    }
+}
+```
+- `stream().map(MemberResponse::from).toList()` : 엔티티 목록을 하나씩 DTO 로 바꿔 새 목록 생성
+- `MemberService` 에 `Optional<Member> findById(Long id)` 추가 (없을 수도 있는 값 → `Optional`)
+- `SecurityConfig` 관리자 규칙 수정 → **새 주소를 만들면 접근 규칙도 바로 추가** (6주차 교훈)
+  ```java
+  .requestMatchers("/admin/**", "/api/admin/**").hasRole("ADMIN")
+  ```
+- 결과 : admin → 목록 200(배열, 비밀번호 없음), `/9999` → 404, USER → 403 (규칙이 없다면 USER 도 전체 회원 목록 200)
+
+### 10. 관리자 API - 등록 (단계 6)
+
+**`AdminApiController.java` (POST 추가)**
+```java
+@PostMapping // 회원 등록 : POST /api/admin/members (본문 JSON → MemberForm)
+public ResponseEntity<?> create(@RequestBody MemberForm form) {
+    try {
+        Member saved = memberService.signup(form); // 5주차 회원가입 로직 재사용 (BCrypt)
+        return ResponseEntity
+                .created(URI.create("/api/admin/members/" + saved.getId())) // 201 + Location
+                .body(MemberResponse.from(saved));
+    } catch (IllegalArgumentException e) { // 중복 아이디, 빈 값 …
+        return ResponseEntity.badRequest().body(Map.of("error", e.getMessage())); // 400
+    }
+}
+```
+- `@RequestBody` : 요청 본문의 JSON 을 자바 객체로 변환 (5주차 폼 데이터는 스프링이 자동으로 채웠지만, JSON 은 `@RequestBody` 필수)
+- `ResponseEntity<?>` : 성공 본문은 `MemberResponse`, 실패 본문은 `Map` → 제네릭 와일드카드(모든 타입 가능)
+
+**`MemberService.java` (`signup()` 첫 줄에 빈 값 검사)** — JSON 요청에는 HTML 의 `required` 검사가 없기 때문
+```java
+public Member signup(MemberForm form) {
+    if (isBlank(form.getUsername()) || isBlank(form.getPassword()) || isBlank(form.getName())) {
+        throw new IllegalArgumentException("아이디, 비밀번호, 이름은 필수입니다.");
+    }
+    ... // 기존 중복 아이디 · 비밀번호 확인 검사
+}
+
+private boolean isBlank(String value) { return value == null || value.isBlank(); }
+```
+- 결과 : 첫 등록 201 + `Location: /api/admin/members/번호`, 같은 아이디 400, `{"username":"x"}` 400(필수 값), `"role":"ADMIN"` 을 몰래 넣어도 **USER** (`MemberForm` 에 role 이 없음), DB 에는 `$2a$10$...` 로 저장
+
+### 11. 관리자 API - 권한 변경 · 삭제 (단계 7)
+
+**`RoleRequest.java` (신규, `model/dto`)**
+```java
+// 권한 변경 요청 DTO : 본문 {"role": "ADMIN"} 을 받는다
+public record RoleRequest(String role) {
+}
+```
+
+**`MemberService.java` (`changeRole()` 이 바뀐 회원을 돌려주도록 수정)**
+```java
+public Member changeRole(Long id, String newRole) { // ① void → Member
+    ... // 기존 코드 그대로 (허용 권한 검사, 본인 보호)
+    return memberRepository.save(member); // ② 마지막 줄 : 바뀐 회원을 돌려준다
+}
+```
+
+**`AdminApiController.java` (PATCH · DELETE 추가)**
+```java
+@PatchMapping("/{id}/role") // 권한 변경 : PATCH /api/admin/members/3/role {"role":"ADMIN"}
+public ResponseEntity<?> changeRole(@PathVariable Long id, @RequestBody RoleRequest request) {
+    try {
+        Member member = memberService.changeRole(id, request.role());
+        return ResponseEntity.ok(MemberResponse.from(member)); // 200 OK + 바뀐 회원
+    } catch (IllegalArgumentException e) { // 허용되지 않는 권한, 없는 회원 …
+        return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+    }
+}
+
+@DeleteMapping("/{id}") // 회원 삭제 : DELETE /api/admin/members/3
+public ResponseEntity<?> delete(@PathVariable Long id) {
+    try {
+        memberService.deleteMember(id);
+        return ResponseEntity.noContent().build(); // 204 No Content (돌려줄 본문 없음)
+    } catch (IllegalArgumentException e) {
+        return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+    }
+}
+```
+- 보안 검사는 6주차 서비스에 이미 있음 → **화면이든 API 든 같은 서비스를 호출하므로 같은 규칙이 적용**
+  - `@PreAuthorize` (관리자만) → USER 가 호출하면 403
+  - 허용 권한 검사 → `"SUPER"` 는 400
+  - 본인 보호 → admin 이 자기 자신을 변경·삭제하면 400
+
+| 주차 | DTO 핵심 |
+|---|---|
+| 5주차 (`MemberForm`) | 들어오는 값을 DTO 로 분리 → 권한 조작 방지 |
+| 6주차 (없음) | Thymeleaf 가 서버 안에서 화면에 쓴 값만 출력 → 나가는 DTO 불필요 |
+| 7주차 (2개 추가) | JSON 은 값이 전부 보임 → 응답용 `MemberResponse`, 받는 값도 JSON 이라 `RoleRequest` 추가 |
+
+### 12. 화면에서 API 사용하기 (단계 8)
+
+- 제공 화면 복사 : `templates/admin/members-api.html` (신규), `templates/admin/members.html` ("API 버전으로 보기" 링크 추가된 버전으로 교체)
+
+**`AdminController.java` (추가)**
+```java
+@GetMapping("/members-api") // 우리가 만든 JSON API 를 fetch 로 사용하는 회원 관리 화면
+public String membersApi() {
+    return "admin/members-api"; // 데이터는 화면이 API 로 가져온다
+}
+```
+- 화면은 HTML 껍데기만, 데이터는 JavaScript `fetch` 가 `/api/admin/members` 에서 JSON 으로 가져와 다시 그림 → **페이지가 새로고침되지 않음**
+- 오른쪽 기록창에 요청과 응답 코드 표시 (F12 네트워크 탭에서도 확인 가능)
+- 등록 POST 201, 변경 PATCH 200, 삭제 DELETE 204, 빈 칸 등록 400, 9999번 조회 404
+
+| 손님 | 신분 증명 방법 | 결과 |
+|---|---|---|
+| 브라우저 (제공 화면의 fetch) | admin 으로 로그인할 때 받은 **세션 쿠키**를 자동으로 함께 보냄 | 같은 API, 같은 결과 |
+| Postman | 요청마다 **아이디·비밀번호(Basic 인증)** 를 직접 실어 보냄 | 같은 API, 같은 결과 |
+
+### 13. API 테스트 정리 (Postman)
+
+| # | 메서드 · 주소 | 계정 | Body | 기대 결과 |
+|---|---|---|---|---|
+| 1 | `GET /api/hello` | 없음 | 없음 | 200 |
+| 2 | `GET /api/me` | 없음 / admin | 없음 | 401 / 200 (password 없음) |
+| 3 | `GET /api/admin/members` | admin / USER | 없음 | 200 / 403 |
+| 4 | `GET /api/admin/members/9999` | admin | 없음 | 404 |
+| 5 | `POST /api/admin/members` | admin | `{"username":"postman1","password":"1234","passwordConfirm":"1234","name":"포스트맨"}` | 201 (같은 아이디 다시 → 400) |
+| 6 | `PATCH /api/admin/members/{id}/role` | admin | `{"role":"ADMIN"}` / `{"role":"SUPER"}` | 200 / 400 |
+| 7 | `PATCH /api/admin/members/{admin id}/role` | admin | `{"role":"USER"}` | 400 (본인 변경) |
+| 8 | `DELETE /api/admin/members/{id}` | USER / admin | 없음 | 403 / 204 |
+
+- Body 는 **raw → JSON** 으로 전송, Authorization 은 **Basic Auth**
+
+### 14. 자주 나는 오류
+
+| 증상 | 원인 → 해결 |
+|---|---|
+| 415 Unsupported Media Type | Body 를 raw → JSON 으로 안 보냄 |
+| 400 JSON parse error | 따옴표, 쉼표, 괄호 확인 |
+| 405 Method Not Allowed | 메서드가 다름 (PUT ↔ PATCH) |
+| Postman 에 로그인 HTML | 단계 4 보안 설정 누락 |
+| 401 / 403 | Authorization 미설정·비밀번호 오류 / USER 로 관리자 API |
+| 제공 화면에서 변경·삭제가 403 | `csrf.ignoringRequestMatchers("/api/**")` 누락 |
+| JSON 에 password | 엔티티 그대로 반환 → `MemberResponse.from()` |
+
+- 개발 중에는 오류 JSON 에 trace(서버 내부 정보)가 같이 나옴 → 실서비스에서는 숨겨야 함
+
+### 15. Git 연동
+
+- `README.md` 에 이번 주 진행 상황 기록 (예 : "7주차 회원 관리 REST API(JSON) 완료")
+- 변경 파일 add → commit → GitHub 원격 저장소로 push
+- Postman 결과도 요약해 두면 받은 사람이 바로 API 테스트 가능 (13번 표)
+
+### 참고 : 실습 중 겪은 문제
+
+- `SecurityConfig` 에 `.requestMatchers("/api/hello").permitAll()` 을 `.rememberMe(...);` 뒤에 붙여 문법 오류 → `requestMatchers` 는 `authorizeHttpRequests` 블록 **안**, `anyRequest()` 보다 위에 넣어야 함 (반대로 `.httpBasic()` 등은 `.rememberMe()` 뒤에 `;` 를 지우고 이어 씀)
+- 이전에 실행한 서버가 8080 포트를 잡고 있어 새 서버 실행 실패 → 기존 서버를 중지한 뒤 다시 실행
+- `MemberApiController` 에 `Member` import 누락 (`com.example.demo.model.domain.Member`)
+- `/api/me` 수정 코드를 `MemberResponse.java` 의 record 아래에 붙여 문법 오류 → `MemberApiController` 의 기존 `me()` 메서드를 고쳐야 함
+- 빈 값 검사를 `signup()` 의 세 번째 검사로 넣어 `{"username":"x"}` 요청에 "비밀번호가 일치하지 않습니다." 가 출력됨 → 첫 줄로 옮겨 "필수입니다." 메시지가 나오도록 수정
+- Postman Authorization 에 일반(USER) 계정을 넣어 관리자 API 가 403 → admin 계정으로 변경 (403 은 보안 규칙이 제대로 동작한다는 뜻)
+- `changeRole()` 수정 시 기존 `save()` 줄을 남긴 채 `return ... save()` 를 추가해 저장이 두 번 실행 → 기존 줄 삭제
+- 이 프로젝트의 일반 USER 계정은 슬라이드의 student1 대신 `saevit` 사용, 허용 권한은 6주차 연습문제로 `MANAGER` 까지 포함
+
+### 실행/수정 상태
+
+- `MemberApiController.java`(신규, `/api/hello`·`/api/me`), `AdminApiController.java`(신규, GET·POST·PATCH·DELETE), `MemberResponse.java`·`RoleRequest.java`(신규 DTO) : 실행/수정 완료
+- `SecurityConfig.java`(`/api/hello` 허용, `/api/admin/**` 관리자 규칙, Basic 인증·CSRF 제외·401 응답), `MemberService.java`(`findById`, 빈 값 검사, `changeRole` 반환형), `AdminController.java`(`/members-api`) : 실행/수정 완료
+- `admin/members-api.html` 추가, `admin/members.html` 링크 반영 완료
+- 서버 실행 후 13번 표의 테스트(200·201·204·400·401·403·404) 모두 기대 결과 확인 완료

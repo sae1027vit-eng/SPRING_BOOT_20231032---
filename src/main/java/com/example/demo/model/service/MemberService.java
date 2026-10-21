@@ -1,6 +1,7 @@
 package com.example.demo.model.service;
 
 import java.util.List;
+import java.util.Optional;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Sort;
@@ -27,13 +28,21 @@ public class MemberService implements UserDetailsService { // 로그인을 위�
     // 관리자가 부여할 수 있는 권한 (화면에서 넘어온 값을 그대로 믿지 않는다)
     private static final List<String> ROLES = List.of("USER", "MANAGER", "ADMIN"); // [연습문제 ②] MANAGER 추가
 
+    private boolean isBlank(String value) {
+        return value == null || value.isBlank();
+    } // 클래스 아래쪽
+
     public Member signup(MemberForm form) { // 회원가입
+        if (isBlank(form.getUsername()) || isBlank(form.getPassword()) || isBlank(form.getName())) {
+            throw new IllegalArgumentException("아이디, 비밀번호, 이름은 필수입니다.");
+        }
         if (memberRepository.existsByUsername(form.getUsername())) {
             throw new IllegalArgumentException("이미 사용 중인 아이디입니다.");
         }
         if (form.getPassword() == null || !form.getPassword().equals(form.getPasswordConfirm())) {
             throw new IllegalArgumentException("비밀번호가 일치하지 않습니다."); // DB 저장 전에 차단
         }
+        
         Member member = new Member();
         member.setUsername(form.getUsername());
         member.setPassword(passwordEncoder.encode(form.getPassword())); // ★ 암호화
@@ -66,15 +75,15 @@ public class MemberService implements UserDetailsService { // 로그인을 위�
     }
 
     @PreAuthorize("hasRole('ADMIN')") // 관리자만 실행 가능 (2차 잠금)
-    public void changeRole(Long id, String role) { // 권한 변경
-        if (!ROLES.contains(role)) { // 허용된 권한만
-            throw new IllegalArgumentException("허용되지 않는 권한입니다 : " + role);
+    public Member changeRole(Long id, String newRole) { // 권한 변경
+        if (!ROLES.contains(newRole)) { // 허용된 권한만
+            throw new IllegalArgumentException("허용되지 않는 권한입니다 : " + newRole);
         }
         Member member = memberRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("회원이 존재하지 않습니다."));
         checkNotSelf(member); // [연습문제 ①] 본인 보호
-        member.setRole(role);
-        memberRepository.save(member); // UPDATE (id 가 있으면 수정)
+        member.setRole(newRole);
+        return memberRepository.save(member); // ② 마지막 줄 : 바뀐 회원을 돌려준다
     }
 
     @PreAuthorize("hasRole('ADMIN')") // 관리자만 실행 가능 (2차 잠금)
@@ -93,4 +102,7 @@ public class MemberService implements UserDetailsService { // 로그인을 위�
         }
     }
 
+    public Optional<Member> findById(Long id) {
+        return memberRepository.findById(id);
+    }
 }
