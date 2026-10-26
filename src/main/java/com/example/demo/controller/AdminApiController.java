@@ -2,7 +2,6 @@ package com.example.demo.controller;
 
 import java.net.URI;
 import java.util.List;
-import java.util.Map;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
@@ -13,6 +12,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.example.demo.model.domain.Member;
@@ -27,9 +27,9 @@ public class AdminApiController {
     @Autowired
     MemberService memberService;
 
-    @GetMapping // 회원 목록 : GET /api/admin/members
-    public List<MemberResponse> list() {
-        List<Member> members = memberService.findAll();
+    @GetMapping // 회원 목록·검색 : GET /api/admin/members 또는 GET /api/admin/members?keyword=student
+    public List<MemberResponse> list(@RequestParam(required = false) String keyword) { // [연습문제 ①] 검색어는 선택
+        List<Member> members = memberService.search(keyword); // 검색어가 없으면 전체
         return members.stream().map(MemberResponse::from).toList(); // 엔티티 목록 → DTO 목록
     }
 
@@ -41,35 +41,23 @@ public class AdminApiController {
     }
 
     @PostMapping // 회원 등록 : POST /api/admin/members (본문 JSON → MemberForm)
-    public ResponseEntity<?> create(@RequestBody MemberForm form) {
-        try {
-            Member saved = memberService.signup(form); // 5주차 회원가입 로직 재사용 (BCrypt)
-            return ResponseEntity
-                    .created(URI.create("/api/admin/members/" + saved.getId())) // 201 + Location
-                    .body(MemberResponse.from(saved));
-        } catch (IllegalArgumentException e) { // 중복 아이디, 빈 값 …
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage())); // 400
-        }
+    public ResponseEntity<MemberResponse> create(@RequestBody MemberForm form) {
+        Member saved = memberService.signup(form); // 5주차 회원가입 로직 재사용 (BCrypt)
+        return ResponseEntity
+                .created(URI.create("/api/admin/members/" + saved.getId())) // 201 + Location
+                .body(MemberResponse.from(saved)); // 오류(400)는 ApiExceptionHandler 가 처리
     }
 
     @PatchMapping("/{id}/role") // 권한 변경 : PATCH /api/admin/members/3/role {"role":"ADMIN"}
-    public ResponseEntity<?> changeRole(@PathVariable Long id, @RequestBody RoleRequest request) {
-        try {
-            Member member = memberService.changeRole(id, request.role());
-            return ResponseEntity.ok(MemberResponse.from(member)); // 200 OK + 바뀐 회원
-        } catch (IllegalArgumentException e) { // 허용되지 않는 권한, 없는 회원 …
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
-        }
+    public ResponseEntity<MemberResponse> changeRole(@PathVariable Long id, @RequestBody RoleRequest request) {
+        Member member = memberService.changeRole(id, request.role());
+        return ResponseEntity.ok(MemberResponse.from(member)); // 200 OK + 바뀐 회원
     }
 
     @DeleteMapping("/{id}") // 회원 삭제 : DELETE /api/admin/members/3
-    public ResponseEntity<?> delete(@PathVariable Long id) {
-        try {
-            memberService.deleteMember(id);
-            return ResponseEntity.noContent().build(); // 204 No Content (돌려줄 본문 없음)
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
-        }
+    public ResponseEntity<Void> delete(@PathVariable Long id) {
+        memberService.deleteMember(id);
+        return ResponseEntity.noContent().build(); // 204 No Content (돌려줄 본문 없음)
     }
 
 }
