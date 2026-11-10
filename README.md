@@ -2020,3 +2020,93 @@ private boolean isAdmin() { // 로그인한 사람이 관리자(ROLE_ADMIN)인�
 - `SecurityConfig.java`(`/board`, `/board/{id:\d+}` 허용), `index.html`(게시판 메뉴) 반영 완료
 - `templates/board/`, `templates/error/404.html`, `static/css/board.css` 제공 화면 복사 완료
 - 서버를 켜고 위 테스트 표 확인하기 ⬜
+
+## ✏️ 실습 (9주차 연습문제 : 게시판 개선하기 — 조회수 & 내가 쓴 글 모아 보기)
+
+### 문제는 이랬다
+
+1. 조회수 : 상세 화면을 열 때마다 `viewCount` 1 증가 (힌트 : `PostService`에 `read(id)` → 컨트롤러 `detail()`에서 사용, 확인은 목록·상세의 **조회** 숫자)
+2. 내가 쓴 글 모아 보기 : `GET /board/my` → 로그인한 사람의 글만, 최신 글이 위로 (힌트 : 리포지토리에 **메서드 이름만** 추가, 목록 화면 재사용하고 `listTitle`로 제목 변경)
+
+### 이렇게 만들었다
+
+**① 조회수 — `PostService.java` (추가)**
+```java
+public Post read(Long id) { // [연습문제 ①] 상세 화면 : 열 때마다 조회수 1 증가
+    Post post = findById(id);
+    post.setViewCount(post.getViewCount() + 1);
+    return postRepository.save(post); // id 가 있으니 UPDATE
+}
+```
+
+**`BoardController.java` (`detail()` 수정)**
+```java
+@GetMapping("/{id}") // 상세 : GET /board/3 (누구나)
+public String detail(@PathVariable Long id, Model model) {
+    Post post = postService.read(id); // [연습문제 ①] findById → read (조회수 1 증가)
+    model.addAttribute("post", post);
+    return "board/detail";
+}
+```
+- `findById()`는 그대로 두고 상세 화면만 `read()`를 쓴다. → 수정 화면(`findForEdit`)이나 삭제에서 글을 찾을 때는 조회수가 안 올라간다.
+- `viewCount`는 엔티티를 만들 때 이미 `int viewCount = 0`으로 넣어 둬서, 화면(`post.viewCount`)은 고칠 필요가 없었다.
+
+**② 내가 쓴 글 — `PostRepository.java` (메서드 이름만 추가)**
+```java
+// [연습문제 ②] 작성자(author)의 username 으로 찾고, 번호 큰 순서(최신 글)로
+List<Post> findByAuthor_UsernameOrderByIdDesc(String username);
+```
+
+| 이름 조각 | 뜻 | SQL 로 바꾸면 |
+|---|---|---|
+| `findBy` | 찾아라 | `SELECT … FROM posts` |
+| `Author_Username` | 작성자(author)의 username으로 | `JOIN member … WHERE m.username = ?` |
+| `OrderByIdDesc` | 번호 큰 순서(최신 글)로 | `ORDER BY p.id DESC` |
+
+- `_`(언더스코어)는 "author **안의** username"이라고 경로를 끊어 주는 표시다. → `@ManyToOne`으로 연결해 둔 덕분에 메서드 이름만으로 JOIN까지 된다.
+
+**`PostService.java` (추가)**
+```java
+public List<Post> findMine(String username) { // [연습문제 ②] 내가 쓴 글 (최신 글이 위로)
+    return postRepository.findByAuthor_UsernameOrderByIdDesc(username);
+}
+```
+
+**`BoardController.java` (추가, `/{id}` 위에)**
+```java
+@GetMapping("/my") // [연습문제 ②] 내가 쓴 글 : GET /board/my (로그인 필요)
+public String myList(Principal principal, Model model) {
+    List<Post> posts = postService.findMine(principal.getName());
+    model.addAttribute("posts", posts);
+    model.addAttribute("listTitle", "내가 쓴 글"); // 목록 화면 재사용, 제목만 변경
+    return "board/list";
+}
+```
+- 제공 `list.html`에 이미 `${listTitle ?: '게시판'}`(없으면 "게시판")과 "내가 쓴 글" 버튼(`/board/my`)이 들어 있어서 화면은 그대로 썼다.
+- `SecurityConfig`는 고치지 않았다. `/board/my`는 `{id:\d+}`(숫자만)에 걸리지 않으니까 `anyRequest().authenticated()`로 가서 자동으로 **로그인 필요**가 된다.
+
+### 확인하는 방법
+
+| # | 하는 일 | 기대 결과 |
+|---|---|---|
+| ① | 같은 글 상세를 3번 열기 | 조회 3 |
+| ② | 로그인 → 내가 쓴 글 | 내 글만, 제목 "내가 쓴 글" |
+| ② | 로그인 안 하고 `/board/my` | 로그인 화면 |
+
+### 결과
+
+| # | 실제로 해 본 것 | 결과 |
+|---|---|---|
+| ① | 비로그인으로 1번 글(한새빛 작성, 조회 0) 상세를 3번 열기 | 조회 1 → 2 → **3** ✅, 목록의 조회 칸도 3 |
+| ② | admin으로 `/board/my` | 제목 **"내가 쓴 글"**, 전체 2개 중 관리자 글(2번) 1개만 ✅ |
+| ② | 로그인 안 하고 `/board/my` (브라우저) | 302 → `/login` ✅ |
+
+### 🔧 하다가 막혔던 것
+
+- 처음에 curl로 로그인 없이 `/board/my`를 열었더니 로그인 화면(302)이 아니라 **401**이 왔다. → 7주차에 넣은 `.httpBasic()` 때문에, 브라우저가 아닌 요청(`Accept: text/html` 헤더 없음)에는 스프링이 Basic 인증 방식으로 401을 돌려준다. 브라우저처럼 `Accept: text/html` 헤더를 붙이니 302 → `/login`이 나왔다. (보안 구멍이 아니라 요청 종류별로 응답만 다른 것)
+- `/my`와 `/{id}`가 둘 다 `/board/○○` 모양이라 겹칠까 걱정했는데, 스프링은 **글자가 정해진 주소(`/my`)를 변수 주소(`/{id}`)보다 먼저** 고른다. 그래도 읽기 쉽게 `/my`를 `/{id}` 위에 두었다.
+
+### 상태
+
+- `PostRepository.java`(`findByAuthor_UsernameOrderByIdDesc`), `PostService.java`(`read`, `findMine`), `BoardController.java`(`detail()`에서 `read` 사용, `/my` 추가) : 실행해서 확인 완료 ✅
+- 9주차 연습문제 2개 모두 서버를 켜고 위 표의 시나리오가 기대한 결과로 나왔다.

@@ -39,9 +39,17 @@ public class BoardController {
         }
     }
 
+    @GetMapping("/my") // [연습문제 ②] 내가 쓴 글 : GET /board/my (로그인 필요)
+    public String myList(Principal principal, Model model) {
+        List<Post> posts = postService.findMine(principal.getName());
+        model.addAttribute("posts", posts);
+        model.addAttribute("listTitle", "내가 쓴 글"); // 목록 화면 재사용, 제목만 변경
+        return "board/list";
+    }
+
     @GetMapping("/{id}") // 상세 : GET /board/3 (누구나)
     public String detail(@PathVariable Long id, Model model) {
-        Post post = postService.findById(id);
+        Post post = postService.read(id); // [연습문제 ①] findById → read (조회수 1 증가)
         model.addAttribute("post", post);
         return "board/detail";
     }
