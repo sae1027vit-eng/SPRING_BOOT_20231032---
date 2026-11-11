@@ -17,7 +17,9 @@ import org.springframework.stereotype.Service;
 
 import com.example.demo.model.domain.Member;
 import com.example.demo.model.dto.MemberForm;
+import com.example.demo.model.repository.CommentRepository;
 import com.example.demo.model.repository.MemberRepository;
+import com.example.demo.model.repository.PostRepository;
 
 @Service // 서비스 등록
 public class MemberService implements UserDetailsService { // 로그인을 위한 인터페이스 제공
@@ -25,6 +27,11 @@ public class MemberService implements UserDetailsService { // 로그인을 위�
     private MemberRepository memberRepository;
     @Autowired // SecurityConfig 에 등록한 BCryptPasswordEncoder 주입
     private PasswordEncoder passwordEncoder;
+    @Autowired // ① 필드 추가
+    private PostRepository postRepository;
+    @Autowired
+    private CommentRepository commentRepository;
+
     // 관리자가 부여할 수 있는 권한 (화면에서 넘어온 값을 그대로 믿지 않는다)
     private static final List<String> ROLES = List.of("USER", "MANAGER", "ADMIN"); // [연습문제 ②] MANAGER 추가
 
@@ -42,7 +49,7 @@ public class MemberService implements UserDetailsService { // 로그인을 위�
         if (form.getPassword() == null || !form.getPassword().equals(form.getPasswordConfirm())) {
             throw new IllegalArgumentException("비밀번호가 일치하지 않습니다."); // DB 저장 전에 차단
         }
-        
+
         Member member = new Member();
         member.setUsername(form.getUsername());
         member.setPassword(passwordEncoder.encode(form.getPassword())); // ★ 암호화
@@ -100,6 +107,10 @@ public class MemberService implements UserDetailsService { // 로그인을 위�
         Member member = memberRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("회원이 존재하지 않습니다."));
         checkNotSelf(member); // [연습문제 ①] 본인 보호
+        if (postRepository.existsByAuthor(member) || commentRepository.existsByAuthor(member)) {
+            throw new IllegalArgumentException("작성한 글이나 댓글이 있는 회원은 삭제할 수 없습니다.");
+        }
+
         memberRepository.delete(member); // DELETE
     }
 
