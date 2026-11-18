@@ -2524,3 +2524,140 @@ public void deleteMember(Long id) {
 - `templates/board/list.html`, `detail.html`, `static/css/board.css` 10주차 화면으로 교체 완료
 - `mvnw clean compile` 성공 ✅
 - 서버를 켜고 위 테스트 표 확인하기 ⬜
+
+## ✏️ 실습 (10주차 연습문제 : 게시판 개선하기 — 내가 쓴 글 페이징 & 작성자로 검색)
+
+### 문제는 이랬다
+
+1. 내가 쓴 글 페이징 : 9주차 연습문제 "내가 쓴 글"에도 페이징 → `GET /board/my?page=0`이면 내 글 10개씩 + 페이지 번호 (힌트 : 리포지토리 `findByAuthor_Username(String username, Pageable pageable)`, 컨트롤러가 `page`와 `pageUrl`(`/board/my`)을 넘기면 페이지 링크가 바뀐다)
+2. 작성자로 검색 : 검색 범위를 **제목+내용 / 작성자** 중에서 고르기 (힌트 : JPQL `p.author.name LIKE %:name%`, 컨트롤러가 `type`을 넘기면 화면에 선택 상자가 나타난다)
+
+### 이렇게 만들었다
+
+**① 내가 쓴 글 페이징 — `PostRepository.java` (메서드 이름만 추가)**
+```java
+// [10주차 연습문제 ①] 내가 쓴 글 페이징 : 마지막에 Pageable 만 더하면 Page 가 된다 (정렬은 Pageable 이 담당)
+Page<Post> findByAuthor_Username(String username, Pageable pageable);
+```
+- 9주차 `findByAuthor_UsernameOrderByIdDesc`에서 **`OrderByIdDesc`를 빼고** 마지막에 `Pageable`을 더했다. 정렬은 `PageRequest`의 `Sort`가 맡으니까 이름에 또 쓸 필요가 없다.
+
+| 구분 | 9주차 연습문제 | 10주차 연습문제 ① |
+|---|---|---|
+| 메서드 | `findByAuthor_UsernameOrderByIdDesc(username)` | `findByAuthor_Username(username, pageable)` |
+| 반환 | `List<Post>` (전부) | `Page<Post>` (10개 + 페이지 정보) |
+| 정렬 | 이름에 `OrderByIdDesc` | `Pageable` 안의 `Sort` |
+
+**`PostService.java` (`findMine()` 수정 + 페이지 요청 만드는 부분 묶기)**
+```java
+// [10주차 연습문제 ①] 내가 쓴 글도 10개씩 (최신 글이 위로)
+public Page<Post> findMine(String username, int page) {
+    return postRepository.findByAuthor_Username(username, pageRequest(page));
+}
+
+private PageRequest pageRequest(int page) { // 목록·검색·내가 쓴 글이 같은 규칙 (10개씩, 최신 순)
+    return PageRequest.of(Math.max(page, 0), PAGE_SIZE, Sort.by(Sort.Direction.DESC, "id"));
+}
+```
+- `PageRequest.of(...)` 줄이 `findPage()`와 `findMine()`에 똑같이 들어가서 `pageRequest()` 하나로 묶었다. → 나중에 "20개씩"으로 바꿔도 한 곳만 고치면 된다.
+- 9주차의 `List` 버전 `findMine(username)`은 더 이상 쓰는 곳이 없어서 지웠다.
+
+**`BoardController.java` (`myList()` 수정)**
+```java
+@GetMapping("/my") // [9주차 연습문제 ②] 내가 쓴 글 : GET /board/my?page=0 (로그인 필요)
+public String myList(@RequestParam(defaultValue = "0") int page, Principal principal, Model model) {
+    Page<Post> posts = postService.findMine(principal.getName(), page); // [10주차 연습문제 ①] 10개씩
+    model.addAttribute("posts", posts.getContent());
+    model.addAttribute("page", posts); // 페이지 번호가 생긴다
+    model.addAttribute("pageUrl", "/board/my"); // 페이지 링크를 /board 대신 /board/my 로
+    model.addAttribute("listTitle", "내가 쓴 글"); // 목록 화면 재사용, 제목만 변경
+    return "board/list";
+}
+```
+- 제공 `list.html`의 페이지 링크는 `th:with="url=${pageUrl ?: '/board'}"` → `pageUrl`이 없으면 `/board`, 있으면 그 주소로 링크를 만든다. 그래서 `pageUrl`을 안 넘기면 내가 쓴 글 2페이지를 눌렀을 때 **전체 목록 2페이지**로 가 버린다.
+- "전체 N개"도 `page`가 있으면 `page.totalElements`를 쓰니까 10개가 아니라 **내 글 전체 수**가 나온다.
+
+**② 작성자로 검색 — `PostRepository.java` (추가)**
+```java
+// [10주차 연습문제 ②] 작성자 이름으로 검색 (글 → 작성자 → 이름, JOIN 은 JPA 가 자동으로)
+@Query("SELECT p FROM Post p WHERE p.author.name LIKE %:name%")
+Page<Post> searchByWriter(@Param("name") String name, Pageable pageable);
+```
+
+| 검색 범위 | JPQL 조건 | SQL 로 바꾸면 |
+|---|---|---|
+| 제목+내용 (단계 2) | `p.title LIKE … OR p.content LIKE …` | `posts` 테이블만 |
+| 작성자 (연습 ②) | `p.author.name LIKE …` | `posts JOIN member` (자동) |
+
+- `p.author.name` : 글 → 작성자(`@ManyToOne Member`) → 이름. JPQL에서 점(`.`)으로 따라가기만 하면 JPA가 `JOIN`을 알아서 만들어 준다.
+
+**`PostService.java` (`findPage()`에 `type` 추가)**
+```java
+// [10주차] 단계 2 : 페이지 목록 + 검색 (검색어가 없으면 전체)
+// [10주차 연습문제 ②] type 추가 : "writer" 면 작성자 이름, 그 밖에는 제목+내용
+public Page<Post> findPage(String keyword, String type, int page) {
+    PageRequest pageable = pageRequest(page);
+    if (keyword == null || keyword.isBlank()) { // 앞이 true면 뒤를 실행하지 않음
+        return postRepository.findAll(pageable);
+    }
+    if ("writer".equals(type)) { // "writer".equals(...) : type 이 null 이어도 오류 없음
+        return postRepository.searchByWriter(keyword.trim(), pageable);
+    }
+    return postRepository.search(keyword.trim(), pageable); // 검색 결과도 10개씩
+}
+```
+- `type.equals("writer")`라고 쓰면 `type`이 `null`일 때 `NullPointerException`이 난다. 글자를 앞에 두는 `"writer".equals(type)`이 안전하다.
+- `writer`가 아니면 전부 제목+내용으로 검색한다. → 주소창에 `type=abc`처럼 이상한 값을 넣어도 오류 없이 기본 검색으로 처리된다.
+
+**`BoardController.java` (`list()`에 `type` 추가)**
+```java
+@GetMapping // 목록 : GET /board?page=0&keyword=스프링&type=all (누구나)
+public String list(@RequestParam(defaultValue = "0") int page,
+        @RequestParam(required = false) String keyword,
+        @RequestParam(defaultValue = "all") String type, Model model) { // [10주차 연습문제 ②] 검색 범위
+    Page<Post> posts = postService.findPage(keyword, type, page);
+    model.addAttribute("posts", posts.getContent());
+    model.addAttribute("page", posts);
+    model.addAttribute("keyword", keyword); // 검색창에 검색어 유지, 페이지 링크에도 붙인다
+    model.addAttribute("type", type); // [10주차 연습문제 ②] 넘기면 화면에 선택 상자가 나타나고, 페이지 링크에도 붙는다
+    return "board/list";
+}
+```
+- 제공 `list.html`에 이미 `<select th:if="${type != null}" name="type">`(제목+내용 / 작성자)와 페이지 링크의 `type=${type}`이 들어 있어서 화면은 고치지 않았다.
+- `defaultValue = "all"` : 처음 `/board`로 들어와도 `type`이 `null`이 아니라서 선택 상자가 항상 보이고, "제목+내용"이 기본으로 선택된다.
+- `SecurityConfig`는 고치지 않았다. `?type=`도 주소 뒤에 붙는 값이라 `/board` permitAll에 그대로 포함된다.
+
+### 확인하는 방법
+
+| # | 하는 일 | 기대 결과 |
+|---|---|---|
+| ① | admin 로그인 → 내가 쓴 글 | 10개씩, 링크가 `/board/my?page=1` |
+| ① | 로그인 안 하고 `/board/my` | 로그인 화면 |
+| ② | 작성자 선택 + "홍길" 검색 | 홍길동의 글만 |
+| ② | 작성자 검색 결과 2페이지 | 주소에 `type=writer` 유지 |
+
+### 결과
+
+- 서버를 켜고 브라우저 대신 curl로 확인했다. (DB에 글 107개 : 관리자 106개, 한새빛 1개)
+
+| # | 실제로 해 본 것 | 결과 |
+|---|---|---|
+| ② | `/board` (검색 없이) | 선택 상자가 나타나고 "제목+내용"이 선택됨, 다음 링크 `/board?page=1&keyword=&type=all` ✅ |
+| ② | 작성자 + "한새" | 검색 결과 **1개**, 작성자 한새빛만, 선택 상자 "작성자" 유지 ✅ |
+| ② | 작성자 + "관리" | 검색 결과 **106개**, 작성자 관리자만 ✅ |
+| ② | 제목+내용 + "관리" (같은 검색어) | 검색 결과 **1개** → 작성자 검색과 결과가 다르다 = 범위가 제대로 나뉨 ✅ |
+| ② | 작성자 + "홍길" | 홍길동 회원이 없어서 0개, "검색 결과가 없습니다." ✅ |
+| ② | 작성자 + "관리" 2페이지 | 다음 링크 `/board?page=2&keyword=관리&type=writer` → **`type=writer` 유지** ✅ |
+| ① | 로그인 안 하고 `/board/my?page=1` | 302 → `/login` ✅ |
+| ① | admin 로그인 → 내가 쓴 글 | 브라우저에서 직접 확인하기 ⬜ (관리자 글이 106개라 10개씩 11페이지가 나와야 한다) |
+
+### 🔧 하다가 막혔던 것
+
+- 처음에는 `findPage()`와 `findMine()`에 `PageRequest.of(Math.max(page, 0), PAGE_SIZE, Sort.by(...))`를 똑같이 두 번 썼다. → `pageRequest(page)` 메서드 하나로 묶었다.
+- `myList()`를 `Page`로 바꾸고 나니 `BoardController`의 `import java.util.List;`가 주석에서만 쓰여서 노란 줄(안 쓰는 import)이 생겼다. → 지웠다.
+- 작성자 검색은 **아이디(`username`)가 아니라 이름(`name`)** 으로 찾는다. 목록의 작성자 칸에 보이는 게 이름(`post.author.name`)이라서, 화면에 보이는 대로 검색되는 게 자연스럽다.
+
+### 상태
+
+- `PostRepository.java`(`findByAuthor_Username`, `searchByWriter`), `PostService.java`(`findPage`에 `type`, `findMine` 페이징, `pageRequest`), `BoardController.java`(`list()`에 `type`, `myList()` 페이징 + `pageUrl`) : 코드 작성 완료, `mvnw clean compile` 성공 ✅
+- 연습문제 ② 전부, 연습문제 ① 비로그인 확인 : 서버를 켜고 확인 완료 ✅
+- 연습문제 ① admin 로그인 후 내가 쓴 글 페이지 번호 확인 ⬜

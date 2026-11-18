@@ -1,7 +1,6 @@
 package com.example.demo.controller;
 
 import java.security.Principal;
-import java.util.List;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
@@ -34,13 +33,15 @@ public class BoardController {
     // return "board/list";
     // }
 
-    @GetMapping // 목록 : GET /board?page=0&keyword=스프링 (누구나)
+    @GetMapping // 목록 : GET /board?page=0&keyword=스프링&type=all (누구나)
     public String list(@RequestParam(defaultValue = "0") int page,
-            @RequestParam(required = false) String keyword, Model model) {
-        Page<Post> posts = postService.findPage(keyword, page);
+            @RequestParam(required = false) String keyword,
+            @RequestParam(defaultValue = "all") String type, Model model) { // [10주차 연습문제 ②] 검색 범위
+        Page<Post> posts = postService.findPage(keyword, type, page);
         model.addAttribute("posts", posts.getContent());
         model.addAttribute("page", posts);
         model.addAttribute("keyword", keyword); // 검색창에 검색어 유지, 페이지 링크에도 붙인다
+        model.addAttribute("type", type); // [10주차 연습문제 ②] 넘기면 화면에 선택 상자가 나타나고, 페이지 링크에도 붙는다
         return "board/list";
     }
 
@@ -60,10 +61,12 @@ public class BoardController {
         }
     }
 
-    @GetMapping("/my") // [연습문제 ②] 내가 쓴 글 : GET /board/my (로그인 필요)
-    public String myList(Principal principal, Model model) {
-        List<Post> posts = postService.findMine(principal.getName());
-        model.addAttribute("posts", posts);
+    @GetMapping("/my") // [9주차 연습문제 ②] 내가 쓴 글 : GET /board/my?page=0 (로그인 필요)
+    public String myList(@RequestParam(defaultValue = "0") int page, Principal principal, Model model) {
+        Page<Post> posts = postService.findMine(principal.getName(), page); // [10주차 연습문제 ①] 10개씩
+        model.addAttribute("posts", posts.getContent());
+        model.addAttribute("page", posts); // 페이지 번호가 생긴다
+        model.addAttribute("pageUrl", "/board/my"); // 페이지 링크를 /board 대신 /board/my 로
         model.addAttribute("listTitle", "내가 쓴 글"); // 목록 화면 재사용, 제목만 변경
         return "board/list";
     }

@@ -56,15 +56,26 @@ public class PostService {
     public static final int PAGE_SIZE = 10; // 한 페이지에 보여 줄 글 수
 
     // [10주차] 단계 2 : 페이지 목록 + 검색 (검색어가 없으면 전체)
-    public Page<Post> findPage(String keyword, int page) {
-        PageRequest pageable = PageRequest.of(Math.max(page, 0), PAGE_SIZE, Sort.by(Sort.Direction.DESC, "id"));
+    // [10주차 연습문제 ②] type 추가 : "writer" 면 작성자 이름, 그 밖에는 제목+내용
+    public Page<Post> findPage(String keyword, String type, int page) {
+        PageRequest pageable = pageRequest(page);
         if (keyword == null || keyword.isBlank()) { // 앞이 true면 뒤를 실행하지 않음
             return postRepository.findAll(pageable);
+        }
+        if ("writer".equals(type)) { // "writer".equals(...) : type 이 null 이어도 오류 없음
+            return postRepository.searchByWriter(keyword.trim(), pageable);
         }
         return postRepository.search(keyword.trim(), pageable); // 검색 결과도 10개씩
     }
 
+    // [10주차 연습문제 ①] 내가 쓴 글도 10개씩 (최신 글이 위로)
+    public Page<Post> findMine(String username, int page) {
+        return postRepository.findByAuthor_Username(username, pageRequest(page));
+    }
 
+    private PageRequest pageRequest(int page) { // 목록·검색·내가 쓴 글이 같은 규칙 (10개씩, 최신 순)
+        return PageRequest.of(Math.max(page, 0), PAGE_SIZE, Sort.by(Sort.Direction.DESC, "id"));
+    }
 
     public Post findById(Long id) { // 글 1개 (없으면 404 → templates/error/404.html)
         return postRepository.findById(id)
@@ -75,10 +86,6 @@ public class PostService {
         Post post = findById(id);
         post.setViewCount(post.getViewCount() + 1);
         return postRepository.save(post); // id 가 있으니 UPDATE
-    }
-
-    public List<Post> findMine(String username) { // [연습문제 ②] 내가 쓴 글 (최신 글이 위로)
-        return postRepository.findByAuthor_UsernameOrderByIdDesc(username);
     }
 
     public Post findForEdit(Long id) { // 수정 화면에 보여 줄 글 (본인 글만)
