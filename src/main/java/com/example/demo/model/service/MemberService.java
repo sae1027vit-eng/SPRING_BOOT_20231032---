@@ -18,6 +18,7 @@ import org.springframework.stereotype.Service;
 import com.example.demo.model.domain.Member;
 import com.example.demo.model.dto.MemberForm;
 import com.example.demo.model.repository.CommentRepository;
+import com.example.demo.model.repository.EnrollmentRepository;
 import com.example.demo.model.repository.MemberRepository;
 import com.example.demo.model.repository.PostRepository;
 
@@ -31,6 +32,8 @@ public class MemberService implements UserDetailsService { // 로그인을 위�
     private PostRepository postRepository;
     @Autowired
     private CommentRepository commentRepository;
+    @Autowired // [11주차 연습문제 ②] 신청 내역이 있는지 확인
+    private EnrollmentRepository enrollmentRepository;
 
     // 관리자가 부여할 수 있는 권한 (화면에서 넘어온 값을 그대로 믿지 않는다)
     private static final List<String> ROLES = List.of("USER", "MANAGER", "ADMIN"); // [연습문제 ②] MANAGER 추가
@@ -109,6 +112,9 @@ public class MemberService implements UserDetailsService { // 로그인을 위�
         checkNotSelf(member); // [연습문제 ①] 본인 보호
         if (postRepository.existsByAuthor(member) || commentRepository.existsByAuthor(member)) {
             throw new IllegalArgumentException("작성한 글이나 댓글이 있는 회원은 삭제할 수 없습니다.");
+        }
+        if (enrollmentRepository.existsByMember(member)) { // [11주차 연습문제 ②] 신청 인원 계산이 어긋나지 않게 막는다
+            throw new IllegalArgumentException("신청 내역이 있는 회원은 삭제할 수 없습니다.");
         }
 
         memberRepository.delete(member); // DELETE

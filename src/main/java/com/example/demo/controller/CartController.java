@@ -73,4 +73,11 @@ public class CartController {
         }
         return "redirect:/cart";
     }
+
+    @PostMapping("/enrollments/{id}/cancel") // [11주차 연습문제 ①] 신청 취소 : POST /cart/enrollments/7/cancel
+    public String cancel(@PathVariable Long id, Principal principal, RedirectAttributes redirect) {
+        enrollmentService.cancel(id, principal.getName()); // 남의 신청이면 403, 없는 번호면 404
+        redirect.addFlashAttribute("message", "신청이 취소되었습니다.");
+        return "redirect:/cart";
+    }
 }

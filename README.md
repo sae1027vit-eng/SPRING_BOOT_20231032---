@@ -3307,3 +3307,147 @@ uploads/
 - 제공 코드(`FileStore.java`, `templates/board/` 3개, `cart.html`, `error/413.html`, `board.css`) 복사 완료
 - `mvnw clean compile` 성공 ✅
 - 서버를 다시 켜고 `11주차_신청테스트.sql` 실행 후 위 테스트 표 확인하기 ⬜
+
+## ✏️ 실습 (11주차 연습문제 : 신청기 개선하기 — 신청 취소 & 신청자가 있는 모집글 삭제 정리)
+
+### 문제는 이랬다
+
+1. 신청 취소 : 내 신청 내역의 **취소** 버튼 → 신청 내역 삭제 + 신청 인원 - 1 (`POST /cart/enrollments/{id}/cancel`, 제공 `cart.html`의 연습 ① 주석을 풀면 버튼이 보인다)
+   - 조건 : 본인 신청만 취소 (남의 것은 403), 두 작업을 **한 트랜잭션**으로, `save()` 없이 **변경 감지**로 인원 줄이기 (힌트 : `enrollment.getPost()` → `setAppliedCount(... - 1)`)
+2. 삭제 정리 : 신청자가 있는 모집글을 삭제하면 **500** (10주차 "댓글 달린 글 삭제"와 같은 외래 키 문제)
+   - 신청자가 있는 모집글 삭제 → 막기 (`?deleteError`), 신청 내역이 있는 회원 삭제 → 막기, 글을 지우면 포스터 파일도 삭제 (`fileStore.delete`)
+
+### 이렇게 만들었다
+
+**① 신청 취소 — `EnrollmentService.java` (`cancel()` 추가, import : `HttpStatus`, `AccessDeniedException`, `ResponseStatusException`)**
+```java
+// [11주차 연습문제 ①] 신청 취소 : 신청 내역 삭제 + 신청 인원 - 1 (한 트랜잭션)
+@Transactional // 둘 중 하나라도 실패하면 모두 취소
+public String cancel(Long enrollmentId, String username) {
+    Enrollment enrollment = enrollmentRepository.findById(enrollmentId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "신청 내역이 존재하지 않습니다."));
+    if (!enrollment.getMember().getUsername().equals(username)) { // 본인 신청만 → 아니면 403
+        throw new AccessDeniedException("본인의 신청만 취소할 수 있습니다.");
+    }
+    Post post = enrollment.getPost();
+    post.setAppliedCount(post.getAppliedCount() - 1); // save() 없음 → 변경 감지로 커밋 때 UPDATE
+    enrollmentRepository.delete(enrollment); // DELETE 신청 내역
+    return post.getTitle();
+}
+```
+- `@Transactional` 안이라서 `findById()`로 꺼낸 신청 → 모집글(`getPost()`, LAZY)을 JPA가 커밋까지 지켜본다. → `setAppliedCount()`만 해도 커밋할 때 `UPDATE posts`가 나간다. (오늘 14번 "변경 감지")
+- 본인 확인은 9주차 `checkWriter()`와 같은 방식 : `AccessDeniedException`을 던지면 스프링 시큐리티가 **403**으로 바꿔 준다. 없는 번호는 `ResponseStatusException(NOT_FOUND)` → **404**.
+- 두 예외 모두 `RuntimeException`이라서 던지는 순간 롤백된다. (함정 ① 체크 예외에 해당하지 않음)
+
+| 작업 | 신청 확정 `confirm()` | 신청 취소 `cancel()` |
+|---|---|---|
+| 신청 내역 | `save()` → INSERT | `delete()` → DELETE |
+| 신청 인원 | `+ 1` 후 `postRepository.save(post)` | `- 1` 만 (**`save()` 없음**, 변경 감지) |
+| 묶음 | `@Transactional` | `@Transactional` |
+
+**`CartController.java` (맨 아래에 추가)**
+```java
+@PostMapping("/enrollments/{id}/cancel") // [11주차 연습문제 ①] 신청 취소 : POST /cart/enrollments/7/cancel
+public String cancel(@PathVariable Long id, Principal principal, RedirectAttributes redirect) {
+    enrollmentService.cancel(id, principal.getName()); // 남의 신청이면 403, 없는 번호면 404
+    redirect.addFlashAttribute("message", "신청이 취소되었습니다.");
+    return "redirect:/cart";
+}
+```
+- `confirm()`과 달리 try-catch를 두지 않았다. 403 · 404를 **그대로** 응답해야 해서, 잡아 버리면 "남의 것은 403" 조건을 못 지킨다.
+- 주소가 `/cart/enrollments/7/cancel`로 세 칸이라 `/{postId}`(한 칸) · `/{postId}/remove`(두 칸)와 헷갈리지 않는다. (단계 3의 `/confirm` 400 문제와 비교)
+
+**`cart.html`** : `[11주차 연습문제 1]` 주석(`<!--/* ... */-->`)을 풀어서 내 신청 내역 줄마다 **취소** 버튼이 보이게 했다.
+
+**② 삭제 정리 — `EnrollmentRepository.java` (추가)**
+```java
+// [11주차 연습문제 ②] 이 모집글에 신청한 사람이 있는지 / 이 회원의 신청 내역이 있는지
+boolean existsByPost(Post post);
+
+boolean existsByMember(Member member);
+```
+
+**`PostService.java` (`delete()` 수정 + `EnrollmentRepository` 필드 추가)**
+```java
+public void delete(Long id) { // 글 삭제 (본인 또는 관리자)
+    Post post = findById(id);
+    if (!isAdmin())
+        checkWriter(post);
+    if (enrollmentRepository.existsByPost(post)) { // [11주차 연습문제 ②] 신청자가 있으면 막는다 (외래 키 500 방지)
+        throw new IllegalStateException("신청자가 있는 모집글은 삭제할 수 없습니다.");
+    }
+    postRepository.delete(post); // DELETE (댓글은 cascade 로 함께)
+    fileStore.delete(post.getPosterFile()); // [11주차 연습문제 ②] DB 삭제가 끝난 뒤 포스터 파일도 삭제
+}
+```
+- 파일 삭제를 **DB 삭제 다음**에 둔 이유 : 오늘 13번 함정 ④ "파일은 롤백 안 됨". 파일을 먼저 지웠는데 DB 삭제가 실패하면 글은 남고 포스터만 엑스박스가 된다.
+- `fileStore.delete()`는 제공 코드에 이미 있다. `null`(포스터 없는 글)이면 아무것도 안 하고, `uploads/` 밖의 경로는 지우지 않는다.
+
+**`BoardController.java` (`delete()` 수정)**
+```java
+@PostMapping("/{id}/delete") // 삭제 처리 : POST /board/3/delete
+public String delete(@PathVariable Long id) {
+    try {
+        postService.delete(id);
+    } catch (IllegalStateException e) { // [11주차 연습문제 ②] 신청자가 있는 모집글
+        return "redirect:/board/" + id + "?deleteError"; // 상세 화면 + 안내 메시지
+    }
+    return "redirect:/board?deleted"; // 목록 + "삭제되었습니다"
+}
+```
+- 제공 `detail.html`에 이미 `th:if="${param.deleteError}"` 안내("신청자가 있는 모집글은 삭제할 수 없습니다.")가 있어서 화면은 고치지 않았다.
+
+**`MemberService.java` (`deleteMember()`에 추가 + `EnrollmentRepository` 필드 추가)**
+```java
+if (enrollmentRepository.existsByMember(member)) { // [11주차 연습문제 ②] 신청 인원 계산이 어긋나지 않게 막는다
+    throw new IllegalArgumentException("신청 내역이 있는 회원은 삭제할 수 없습니다.");
+}
+```
+- `IllegalArgumentException`으로 던져서 관리자 화면(`AdminController`)은 빨간 안내, 관리자 API는 7주차 `ApiExceptionHandler`가 그대로 **400** `{"error": "..."}`로 바꿔 준다.
+
+| 연관 데이터 | 선택 | 이유 |
+|---|---|---|
+| 글 → 댓글 (10주차) | 함께 삭제 (cascade) | 글이 없으면 댓글도 의미 없음 |
+| 모집글 → 신청 내역 | **막기** | 신청한 사람이 있는데 몰래 사라지면 안 된다 |
+| 회원 → 신청 내역 | **막기** | 신청 인원(`appliedCount`) 계산이 어긋난다 |
+
+### 확인하는 방법
+
+| # | 하는 일 | 기대 결과 |
+|---|---|---|
+| ① | student1 : B 신청 취소 | "신청이 취소되었습니다.", B 0/5 |
+| ① | 남의 신청 번호로 취소 요청 | 403 |
+| ① | 마감된 C 를 student3 이 취소 | C 가 다시 모집 중 |
+| ② | 신청자 있는 모집글 삭제 | 안내 메시지 |
+| ② | 신청자 없는 포스터 글 삭제 | 파일도 사라짐 |
+| ② | 신청 내역 있는 회원 삭제 | 안내 메시지 (API 400) |
+
+### 결과
+
+- 서버를 켜고 Python 스크립트(로그인 · CSRF 토큰 · 파일 업로드까지)로 확인했다. 관리자 API로 테스트 회원 `t11a`(student1 역할), `t11b`(student3 역할)를 만들고, admin이 모집글 B(정원 5), C(정원 1, 포스터), D(정원 3, 포스터)를 썼다. → t11a는 B, t11b는 C 신청 확정 (C 마감)
+
+| # | 실제로 해 본 것 | 결과 |
+|---|---|---|
+| ① | 신청 확정 후 `/cart` | 내 신청 내역에 **취소 버튼**이 보인다 ✅ |
+| ① | t11a : B 취소 | 302 → `/cart`, "신청이 취소되었습니다.", 내 신청 내역 비어 있음, B **신청 1명 → 0명 (남은 자리 5)** ✅ |
+| ① | t11a 가 t11b 의 신청 번호로 취소 | **403**, t11b 의 신청은 그대로 ✅ |
+| ① | 없는 신청 번호 99999 취소 | 404 ✅ |
+| ① | t11b : 마감된 C 취소 | C **신청 1명 · 남은 자리 0 → 신청 0명 · 남은 자리 1** (다시 모집 중) ✅ |
+| ② | admin : 신청자 있는 C 삭제 | 302 → `/board/C번호?deleteError`, "신청자가 있는 모집글은 삭제할 수 없습니다." ✅ (500 아님) |
+| ② | API `DELETE /api/admin/members/{t11b}` (신청 내역 있음) | **400** `{"error":"신청 내역이 있는 회원은 삭제할 수 없습니다."}` ✅ |
+| ② | admin : 신청자 없는 포스터 글 D 삭제 | 302 → `/board?deleted`, `uploads/`의 포스터 파일 **삭제 전 있음 → 삭제 후 없음** ✅ |
+| ② | 취소 후 C 다시 삭제 | 이번에는 삭제됨, 포스터 파일도 사라짐 ✅ |
+
+- 끝나고 테스트 글(B · C · D)과 테스트 회원(t11a · t11b)은 모두 지웠다. (신청 내역이 없어지니 회원 삭제도 204로 성공)
+
+### 🔧 하다가 막혔던 것
+
+- 처음에 Git Bash의 `curl`로 테스트했는데, Windows에서 명령줄의 한글(`"name":"테스트A"`)이 UTF-8로 안 넘어가서 API가 `Invalid UTF-8 middle byte` 400을 냈다. → 한글을 그대로 보낼 수 있게 Python(`urllib`) 스크립트로 바꿨다.
+- 바구니가 비어 있을 때 `/cart` 화면에는 form이 없어서 CSRF 토큰(`_csrf`)을 찾을 수 없었다. → 항상 form이 있는 글쓰기 화면(`/board/write`)에서 토큰을 가져왔다. (토큰은 세션마다 같아서 다른 화면에 써도 된다)
+- 취소 컨트롤러에 `confirm()`처럼 try-catch를 넣을까 했지만, 그러면 남의 신청 취소가 403이 아니라 "안내 메시지 + 302"가 된다. → 조건대로 403이 나오게 잡지 않았다.
+
+### 상태
+
+- `EnrollmentService.java`(`cancel()` + `@Transactional`, 변경 감지), `CartController.java`(`POST /cart/enrollments/{id}/cancel`), `cart.html`(취소 버튼 주석 해제) : 연습문제 ① 완료 ✅
+- `EnrollmentRepository.java`(`existsByPost`, `existsByMember`), `PostService.java`(신청자 있으면 막기 + 포스터 파일 삭제), `BoardController.java`(`?deleteError`), `MemberService.java`(신청 내역 있는 회원 막기) : 연습문제 ② 완료 ✅
+- `mvnw clean compile` 성공, 서버를 켜고 위 표의 시나리오 전부 기대한 결과 확인 ✅
