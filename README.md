@@ -15,6 +15,7 @@
 | [🟫 9주차](#week9) | 게시판 CRUD 만들고, 본인 글만 수정·삭제하게 막기 |
 | [⬛ 10주차](#week10) | 게시판에 페이지 번호·검색·댓글 붙이고, 회원 삭제 시 외래 키 문제 해결 |
 | [⬜ 11주차](#week11) | 모집글 + 포스터 업로드, 세션 신청 바구니, `@Transactional`로 신청 확정 |
+| [🔔 12주차](#week12) | WebSocket + STOMP로 남은 자리 실시간 표시, 커밋 뒤에 보내는 이벤트, 개인 알림 |
 
 <br>
 
@@ -3451,3 +3452,457 @@ if (enrollmentRepository.existsByMember(member)) { // [11주차 연습문제 ②
 - `EnrollmentService.java`(`cancel()` + `@Transactional`, 변경 감지), `CartController.java`(`POST /cart/enrollments/{id}/cancel`), `cart.html`(취소 버튼 주석 해제) : 연습문제 ① 완료 ✅
 - `EnrollmentRepository.java`(`existsByPost`, `existsByMember`), `PostService.java`(신청자 있으면 막기 + 포스터 파일 삭제), `BoardController.java`(`?deleteError`), `MemberService.java`(신청 내역 있는 회원 막기) : 연습문제 ② 완료 ✅
 - `mvnw clean compile` 성공, 서버를 켜고 위 표의 시나리오 전부 기대한 결과 확인 ✅
+
+---
+
+<a id="week12"></a>
+
+# 🔔 12주차 — WebSocket 실시간 알림
+
+- 강의: 자바웹프로그래밍(2) (강사: 최도현)
+- 이번 주 주제: 새로고침 없이 남은 자리가 바뀌고, 내 모집글에 신청이 들어오면 알림이 뜨게 하기 (WebSocket + STOMP + 커밋 뒤 이벤트)
+
+## 📖 오늘 배운 것
+
+### 1. 오늘의 트렌드 — 실시간 웹 · 알림
+
+- **실시간 웹** = 새로고침 없이 **바뀌는** 화면
+  - 티켓팅 · 수강신청 : 남은 좌석 / 배달 · 택시 : 주문 상태, 차 위치 / 채팅 · 협업 문서 : 다른 사람의 입력
+- 공통점 : **서버가 먼저** 브라우저에 알려 준다. (지금까지의 웹은 브라우저가 물어봐야 서버가 답했다)
+
+| 서비스 | 실시간으로 바뀌는 것 | 늦게 보이면 |
+|---|---|---|
+| 티켓팅 · 수강신청 | 남은 좌석 | 없는 자리를 눌러 실패 |
+| 배달 앱 | 주문 접수 → 조리 → 배달 | 계속 새로고침 |
+| 메신저 · 협업 문서 | 새 메시지, 다른 사람의 커서 | 대화가 끊긴다 |
+| **우리 신청기 (오늘)** | **남은 자리, 신청 · 댓글 알림** | 마감된 모집글을 바구니에 담는다 |
+
+- 서버가 먼저 말하게 하는 방법 4가지 → 자주 바뀌고 많은 사람이 봐야 하면 **WebSocket**, 한쪽(서버 → 브라우저)만 필요하면 **SSE**도 좋은 선택 (요즘 LLM 답변 스트리밍)
+
+| 방법 | 동작 | 장점 | 단점 |
+|---|---|---|---|
+| 폴링 (Polling) | 3초마다 "바뀐 거 있어요?" | 쉽다 (기존 HTTP) | 대부분 헛걸음, 늦다 |
+| 롱 폴링 | 바뀔 때까지 서버가 답을 미룬다 | 폴링보다 빠름 | 연결을 계속 다시 맺음 |
+| SSE (Server-Sent Events) | 서버 → 브라우저 한 방향 흐름 | 간단, 자동 재연결 | 브라우저 → 서버는 따로 |
+| **WebSocket (오늘)** | 한 번 연결 → **양방향** 계속 | 빠르고 가볍다 | 연결 관리 · 서버 확장 고민 |
+
+- **알림의 두 얼굴** : 실시간 표시(지금 화면을 보는 사람에게 바로, **오늘**) + 알림함 저장(나중에 들어온 사람도 확인, DB) → 실제 서비스는 **둘 다**
+
+| 방법 | 언제 받나 | 예 |
+|---|---|---|
+| **화면 알림 (WebSocket, 오늘)** | 사이트를 보고 있을 때 | "OO님이 신청했습니다" 토스트 |
+| 알림함 (DB) | 다음에 접속했을 때 | 🔔 종 모양 목록, 읽음 표시 |
+| 앱 푸시 · 메일 | 사이트 밖에서도 | 14주차 확정 메일 |
+
+### 2. 오늘의 실습 순서
+
+| 단계 | 할 일 | 나오는 문제 |
+|---|---|---|
+| 0 | 제공 코드 복사 | |
+| 1 | WebSocket 켜기 (의존성 + `/ws` 열기) | |
+| 2 | 남은 자리 메시지 보내기 | **롤백됐는데 화면은 줄었다** (유령 메시지) |
+| 3 | **커밋 뒤에** 보내기 (이벤트) | |
+| 4 | 모집글 쓴 사람에게 **개인 알림** | |
+
+| 파일 | 오늘 | 학생 코드 |
+|---|---|---|
+| `pom.xml` · `SecurityConfig` | WebSocket 의존성, `/ws` 열기 | 2곳 |
+| `SeatMessage` · `Notification` | 보낼 메시지 (record) | 새 파일 2개 (짧음) |
+| `RealtimeNotifier` | 커밋 뒤에 보내는 곳 | 새 파일 1개 |
+| `EnrollmentService` | 메시지 대신 **이벤트** 발행 | 몇 줄 |
+
+→ 코드는 짧고, **"언제 보내느냐"** 가 오늘의 핵심
+
+### 3. 제공 코드 복사 (단계 0)
+
+- `12주차_제공코드` 폴더에서 복사했다.
+  - `static/js/stomp.umd.min.js` : STOMP 클라이언트 (`@stomp/stompjs` 7.0.0)
+  - `static/js/realtime.js` : 연결 · 구독 · 화면 고치기
+  - `templates/board/list` · `detail`, `cart.html` : 실시간 표시 자리
+  - `static/css/board.css` : 연결 상태 · 종 · 알림 · 숫자 강조
+- `config/WebSocketConfig.java`는 **단계 1 에서** 의존성을 넣은 **다음에** 복사한다. (먼저 복사하면 `@EnableWebSocketMessageBroker`를 못 찾는다)
+
+| 화면 표시 | 주소 (구독) | 메시지 | 언제 |
+|---|---|---|---|
+| 오른쪽 위 "● 실시간 연결됨" | `/ws` 연결 | - | 단계 1 |
+| 남은 자리 · 신청 인원 · 진행 막대 · 마감 (`data-seat-post`) | `/topic/seats` | `{postId, appliedCount, capacity, remaining}` | 단계 2 |
+| 오른쪽 아래 알림 + 🔔 배지 | `/user/queue/notifications` | `{to, text, postId}` | 단계 4 |
+
+- 문제 확인 : 일반 창(admin) · 시크릿 창(student1)으로 같은 모집글 상세를 열고 student1이 신청 확정 → admin 화면의 남은 자리는 **그대로**, 새로고침해야 줄어든다.
+
+| 상황 | 지금 | 바라는 모습 |
+|---|---|---|
+| 다른 사람이 신청 | 새로고침해야 보인다 | **바로** 줄어든다 |
+| 마감됐는데 모르고 담기 | 확정 때 "정원 마감" | 미리 **마감** 표시 |
+| 내 모집글에 신청 | 모른다 | **알림** |
+
+### 4. WebSocket
+
+- 처음 한 번은 **HTTP로 부탁** : "WebSocket으로 바꿔 주세요" (`Upgrade: websocket`)
+- 서버가 **101 Switching Protocols** → 그때부터 **연결을 계속 유지** → 그 연결로 **양쪽 아무나** 언제든 보낸다
+- 2011년 표준 (RFC 6455), 모든 최신 브라우저가 지원
+
+| 구분 | HTTP (지금까지) | WebSocket (오늘) |
+|---|---|---|
+| 누가 먼저 | 항상 브라우저 | **서버도** 먼저 보낸다 |
+| 연결 | 요청마다 (응답 후 끝) | 한 번 연결해서 **유지** |
+| 주소 | `http://` | `ws://` (보안 `wss://`) |
+| 상태 코드 | 200, 302, 404 … | 연결할 때 **101** 한 번 |
+
+**연결 요청과 답 (실제, 줄임)**
+```
+GET /ws HTTP/1.1
+Upgrade: websocket                    ← 바꿔 주세요
+Connection: Upgrade
+Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==
+Sec-WebSocket-Protocol: v12.stomp     ← STOMP 1.2 로 말할게요
+Origin: http://localhost:8080         ← 어느 사이트의 화면인가
+
+HTTP/1.1 101                          ← 바꿨습니다 (이제부터 WebSocket)
+Upgrade: websocket
+Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=
+Sec-WebSocket-Protocol: v12.stomp
+```
+
+| Origin | 결과 | 뜻 |
+|---|---|---|
+| `http://localhost:8080` (우리 사이트) | **101** | 연결 |
+| `http://evil.example.com` (다른 사이트) | **403** | 스프링 기본 = **같은 사이트만** |
+| (없음, 프로그램이 직접 연결) | 101 | 브라우저가 아니면 Origin은 믿을 수 없다 |
+
+→ 그래서 `setAllowedOrigins("*")`는 **쓰지 않는다.**
+
+### 5. STOMP
+
+- WebSocket은 **글자를 주고받는 통로**일 뿐, "누구에게 · 어떤 주제로"는 정해 주지 않는다.
+- **STOMP** : 그 위에서 쓰는 약속
+  - **구독** : "이 주소의 소식을 받을게요"
+  - **발행** : "이 주소로 보냅니다"
+  - **브로커**가 구독한 사람들에게 나눠 준다
+- 스프링이 기본으로 지원한다. (`@EnableWebSocketMessageBroker`)
+
+| 주소 | 받는 사람 | 오늘 |
+|---|---|---|
+| `/topic/seats` | 구독한 **모든 사람** | 남은 자리 |
+| `/user/queue/notifications` | **그 사람만** (로그인 아이디) | 신청 · 댓글 알림 |
+| `/app/...` | 서버 (`@MessageMapping`) | 쓰지 않음 (채팅용) |
+
+- 서버 `convertAndSend("/topic/seats", …)` → 브로커(주소별 구독자 목록) → A(비로그인) · B(student1) · C(admin) **모두**
+- 서버 `convertAndSendToUser("admin", "/queue/…", …)` → 브로커 → **C(admin)만**
+
+### 6. WebSocket 켜기 ① 의존성 (단계 1)
+
+**`pom.xml` (시큐리티 의존성 아래에 추가)**
+```xml
+<!-- [12주차] WebSocket + STOMP : 실시간 알림 -->
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-websocket</artifactId>
+</dependency>
+```
+- `pom.xml` 저장 → **Maven 다시 불러오기** → 제공 `config/WebSocketConfig.java` 복사
+
+**`WebSocketConfig.java` (제공 코드 요약)**
+```java
+registry.addEndpoint("/ws");                        // ① 연결 주소 (같은 사이트에서만)
+registry.enableSimpleBroker("/topic", "/queue");    // ② 서버 → 브라우저 : 여러 명 / 한 사람
+registry.setApplicationDestinationPrefixes("/app"); // ③ 브라우저 → 서버 (오늘은 안 씀)
+registry.setUserDestinationPrefix("/user");         // ④ 특정 사용자에게
+```
+
+### 7. WebSocket 켜기 ② 시큐리티 (단계 1)
+
+**`SecurityConfig.java` (포스터 줄 아래에 추가)**
+```java
+.requestMatchers("/uploads/**").permitAll() // [11주차] 포스터 이미지
+.requestMatchers("/ws").permitAll() // [12주차] 실시간 연결 : 누구나
+// (남은 자리는 비로그인도 본다, 개인 알림은 로그인한 사람만 받는다)
+```
+- 재시작 → 게시판 새로고침 → 오른쪽 위 **"● 실시간 연결됨"**
+
+| 확인 | 어디서 | 기대 결과 |
+|---|---|---|
+| 연결 상태 | 화면 오른쪽 위 | ● 실시간 연결됨 (초록) |
+| 연결 요청 | 개발자 도구 → Network → `ws` 필터 | `/ws` **101 Switching Protocols** |
+| 주고받는 글자 | `/ws` → Messages | CONNECT → CONNECTED → SUBSCRIBE |
+| 로그인 안 함 | 게시판 목록 | 연결됨 (🔔 종은 없음) |
+
+- 로그인한 사람의 연결에는 **세션 쿠키**가 함께 간다. → 서버는 누가 연결했는지 안다. (단계 4에서 사용)
+
+### 8. 남은 자리 ① 메시지 모양 — `record` (단계 2)
+
+**`dto/SeatMessage.java` (새로 만듦)**
+```java
+// [12주차] 단계 2 : 남은 자리 메시지 (서버 → 모든 브라우저, JSON 으로 바뀌어 간다)
+public record SeatMessage(Long postId, int appliedCount, int capacity, int remaining) {
+    public static SeatMessage from(Post post) {
+        return new SeatMessage(post.getId(), post.getAppliedCount(), post.getCapacity(), post.getRemaining());
+    }
+}
+```
+
+| 구분 | class + `@Data` (지금까지 DTO) | **record (오늘, 자바 16+)** |
+|---|---|---|
+| 쓰는 양 | 필드 + 어노테이션 | **한 줄** `record 이름(필드들)` |
+| 값 바꾸기 | setter로 가능 | **불가** (만들 때 정하면 끝) |
+| 꺼내기 | `getPostId()` | `postId()` |
+| 어울리는 곳 | 폼 입력 (값을 채워 가며) | **보내고 끝나는 메시지** |
+
+### 9. 남은 자리 ② 바로 보내기 (단계 2)
+
+**`EnrollmentService.java` (필드 + `confirm()` 안, import : `SimpMessagingTemplate`, `SeatMessage`)**
+```java
+@Autowired // [12주차] 실시간 메시지
+private SimpMessagingTemplate messagingTemplate;
+
+// confirm() 안 : 신청 인원 저장 다음 줄
+post.setAppliedCount(post.getAppliedCount() + 1);
+postRepository.save(post);
+messagingTemplate.convertAndSend("/topic/seats", SeatMessage.from(post)); // [12주차] 단계 2 : 남은 자리를 바로 보낸다
+```
+
+| 코드 | 뜻 |
+|---|---|
+| `SimpMessagingTemplate` | 스프링이 만들어 둔 **메시지 보내는 도구** (`@Autowired`로 받기) |
+| `convertAndSend(주소, 객체)` | 객체 → **JSON** → 그 주소를 구독한 **모든 브라우저** |
+
+**실시간 테스트** (재시작 → `11주차_신청테스트.sql` 실행)
+
+| # | 브라우저 | 하는 일 | 기대 결과 |
+|---|---|---|---|
+| 1 | 일반 창 (로그인 안 함) | 모집글 A 상세 열어 두기 | 남은 자리 5 |
+| 2 | 시크릿 창 (student1) | A 담기 → 모두 신청 확정 | 확정 성공 |
+| 3 | 일반 창 | (새로고침 없이) | 남은 자리 **4**, 숫자가 노랗게 반짝 |
+| 4 | 일반 창 | 게시판 목록 열어 두고 다시 신청 | 제목 앞 `모집 2/5`로 바뀜 |
+| 5 | 개발자 도구 → Console | | `[실시간] 남은 자리 {"postId":…,"remaining":4}` |
+
+### 10. 😱 롤백됐는데 화면은 줄었다 (단계 2 테스트)
+
+- 11주차 시나리오 그대로 : B, C 순서로 담기 → student3이 C 마감 → student1 확정. 일반 창은 **B 상세**를 열어 둔다.
+
+| 확인 | 결과 |
+|---|---|
+| student1 화면 | "정원이 마감되었습니다 : C" (롤백) |
+| DB의 B 신청 인원 | **0** (롤백됐으니 그대로) |
+| 일반 창의 B 남은 자리 | 😱 **4**로 줄었다 |
+| 일반 창 새로고침 | 5로 돌아온다 |
+
+- DB는 되돌아갔는데, 이미 보낸 메시지는 **되돌릴 수 없다** → 사용자는 "자리가 줄었네" 하고 잘못 안다 = **유령 메시지**
+
+```
+JpaTransactionManager : Creating new transaction with name [...EnrollmentService.confirm]
+Hibernate : insert into enrollments (created_at,member_id,post_id) values (?,?,?)   ← B 신청 (아직 확정 아님)
+SimpleBrokerMessageHandler : Processing MESSAGE destination=/topic/seats
+    payload={"postId":221,"appliedCount":1,"capacity":5,"remaining":4}          ← 😱 이미 나갔다
+Hibernate : select ... from posts p1_0 where p1_0.id=?                           ← C 조회 → 마감 → 예외
+JpaTransactionManager : Initiating transaction rollback
+JpaTransactionManager : Rolling back JPA transaction on EntityManager            ← DB 는 되돌아감
+```
+(로그 설정 : `logging.level.org.springframework.messaging.simp.broker=DEBUG`)
+
+| 작업 | 롤백되나? | 예 |
+|---|---|---|
+| DB 저장 · 수정 · 삭제 | ✔ 된다 | 신청 내역, 신청 인원 |
+| 파일 저장 (11주차) | ✘ | 포스터 쓰레기 파일 |
+| **실시간 메시지 (오늘)** | ✘ | 유령 "남은 자리 4" |
+| 메일 · 외부 API (14주차) | ✘ | 확정 안 됐는데 "확정되었습니다" 메일 |
+
+→ 11주차 함정 ④ "파일은 롤백 안 됨"과 같은 이야기
+
+### 11. 커밋 뒤에 보내기 — 이벤트 (단계 3)
+
+- 서비스는 **"이런 일이 있었다"(이벤트)** 만 알리고, 보내기는 **커밋이 끝난 뒤** 다른 곳에서 한다.
+  - `publishEvent(이벤트)` : 알리기 (쪽지만 던진다)
+  - `@TransactionalEventListener` : 트랜잭션 결과를 보고 실행
+- confirm() 트랜잭션 → **커밋 ✔** → `RealtimeNotifier` → `/topic/seats` 전송 / **롤백 ✘** → 쪽지를 **버린다** → 아무것도 안 나감
+
+| phase | 언제 실행 | 쓰는 곳 |
+|---|---|---|
+| **AFTER_COMMIT (기본)** | 커밋 **성공 후** | 알림 · 메일 · 메시지 (오늘) |
+| AFTER_ROLLBACK | 롤백 후 | 실패 기록 |
+| AFTER_COMPLETION | 성공 · 실패 상관없이 | 정리 작업 |
+| BEFORE_COMMIT | 커밋 직전 | 마지막 검사 |
+
+- ⚠ 주의 : **트랜잭션이 없으면 리스너가 실행되지 않는다.**
+
+**`service/RealtimeNotifier.java` (새로 만듦)**
+```java
+@Component // [12주차] 단계 3 : 트랜잭션이 커밋된 뒤에 실시간 메시지를 보낸다
+public class RealtimeNotifier {
+    @Autowired
+    private SimpMessagingTemplate messagingTemplate; // 브로커로 메시지를 보내는 도구(스프링 지원)
+
+    @TransactionalEventListener // 기본 = AFTER_COMMIT : 커밋이 성공했을 때만 (롤백되면 보내지 않는다)
+    public void sendSeats(SeatMessage message) {
+        messagingTemplate.convertAndSend("/topic/seats", message); // /topic/seats 를 구독한 모든 사람에게
+    }
+}
+```
+- 리스너 = 어떤 일이 생기면 실행되도록 등록해 둔 메서드
+- **매개변수 타입(`SeatMessage`)이 곧 "어떤 이벤트를 기다리나"**
+
+**`EnrollmentService.java` (단계 2의 두 줄을 바꾼다, import : `ApplicationEventPublisher` 추가 / `SimpMessagingTemplate` 삭제)**
+```java
+@Autowired // [12주차] 실시간 메시지
+private ApplicationEventPublisher eventPublisher; // [12주차] 단계 3 : 이벤트 발행 (보내기는 커밋 뒤에 RealtimeNotifier 가)
+
+// confirm() 안
+postRepository.save(post);
+eventPublisher.publishEvent(SeatMessage.from(post)); // [12주차] 단계 3 : 이벤트만 던진다 (커밋되면 RealtimeNotifier 가 보낸다)
+```
+
+| 구분 | 단계 2 | 단계 3 |
+|---|---|---|
+| `confirm()` 안에서 | 메시지를 **보낸다** | 이벤트를 **던진다** |
+| 실제 전송 | 그 줄에서 바로 | **커밋 성공 후** `RealtimeNotifier` |
+| 롤백되면 | 😱 유령 메시지 | **보내지 않는다** |
+
+**이벤트 테스트** (`11주차_신청테스트.sql` ② 초기화 → 재시작 → 10번 시나리오 다시)
+
+| # | 하는 일 | 단계 2 | 단계 3 |
+|---|---|---|---|
+| 1 | A 하나만 확정 (성공) | 남은 자리 4 | 남은 자리 4 (같음) |
+| 2 | B, C 확정 중 C 마감 (롤백) | 😱 B 남은 자리 4 | **B 남은 자리 5 그대로** |
+| 3 | C 빼고 다시 확정 (성공) | - | B 남은 자리 4 |
+| 4 | 새로고침 | 숫자가 바뀜 (화면이 틀렸었다) | **그대로** (화면 = DB) |
+
+```
+[성공] Creating new transaction with name [...EnrollmentService.confirm]
+       insert into enrollments (created_at,member_id,post_id) values (?,?,?)
+       Committing JPA transaction on EntityManager                    ← ① 커밋
+       update posts set applied_count=?, ... where id=?
+       Processing MESSAGE destination=/topic/seats
+           payload={"postId":220,"appliedCount":1,"capacity":5,"remaining":4}   ← ② 그 다음에 전송
+[실패] Creating new transaction with name [...EnrollmentService.confirm]
+       insert into enrollments ...
+       Rolling back JPA transaction on EntityManager                  ← 롤백 → Processing MESSAGE 없음
+```
+
+| 일 | 어디서 | 언제 |
+|---|---|---|
+| 신청 저장 · 인원 증가 | `EnrollmentService.confirm()` | 트랜잭션 안 |
+| "인원이 바뀌었다" 알리기 | `publishEvent()` | 트랜잭션 안 (쪽지만) |
+| 실시간 전송 | `RealtimeNotifier` (`@TransactionalEventListener`) | **커밋 후** |
+
+### 12. 개인 알림 (단계 4)
+
+- 남은 자리 : **모두에게** (`/topic/seats`) / 신청 알림 : **모집글 쓴 사람에게만** (`/user/queue/notifications`)
+- 누가 누구인지는 **연결할 때의 로그인 정보**(세션 쿠키)로 안다. 같은 사람이 창을 여러 개 열었으면 모두에게 간다.
+
+| 구분 | 남은 자리 (단계 2 · 3) | 개인 알림 (단계 4) |
+|---|---|---|
+| 보내는 메서드 | `convertAndSend(주소, 메시지)` | `convertAndSendToUser(아이디, 주소, 메시지)` |
+| 받는 사람 | 구독한 모든 사람 (비로그인 포함) | 그 아이디로 로그인한 사람만 |
+| 남이 엿볼 수 있나 | 볼 수 있어도 되는 정보 | **안 된다** (스프링이 사용자별로 나눔) |
+
+```
+Processing SUBSCRIBE destination=/queue/notifications-userfb3deecc-… session=fb3deecc-… user=admin
+Processing SUBSCRIBE destination=/queue/notifications-usera48ad165-… session=a48ad165-… user=student1
+```
+→ 모두 같은 `/user/queue/notifications`를 구독해도, 스프링이 연결마다 따로 나눈다.
+
+**`dto/Notification.java` (새로 만듦)**
+```java
+// [12주차] 단계 4 : 개인 알림 (서버 → 한 사람) : to = 받을 사람 아이디
+public record Notification(String to, String text, Long postId) {
+}
+```
+
+| 필드 | 뜻 | 예 |
+|---|---|---|
+| `to` | 받을 사람의 **로그인 아이디** | `admin` |
+| `text` | 화면에 보여 줄 글자 | 홍길동님이 '…A…' 에 신청했습니다. (1/5) |
+| `postId` | 알림을 누르면 갈 모집글 | 214 |
+
+**`RealtimeNotifier.java` (맨 아래에 추가, import : `Notification`)**
+```java
+@TransactionalEventListener // 단계 4 : 개인 알림도 커밋 뒤에
+public void sendNotification(Notification notification) {
+    messagingTemplate.convertAndSendToUser(notification.to(), "/queue/notifications", notification); // 그 사람에게만
+}
+```
+
+**`EnrollmentService.java` (`confirm()` 안 : 이벤트 발행 다음에 추가)**
+```java
+eventPublisher.publishEvent(SeatMessage.from(post));
+String writer = post.getAuthor().getUsername();
+if (!writer.equals(username)) { // [12주차] 단계 4 : 모집글 쓴 사람에게 알림 (내 글에 내가 신청하면 생략)
+    eventPublisher.publishEvent(new Notification(writer,
+            member.getName() + "님이 '" + post.getTitle() + "' 에 신청했습니다. ("
+                    + post.getAppliedCount() + "/" + post.getCapacity() + ")", post.getId()));
+}
+```
+
+| 값 | 어디서 왔나 |
+|---|---|
+| `writer` | 모집글 작성자의 **로그인 아이디** (받는 사람) |
+| `username` · `member` | `confirm()`에 이미 있는 값 (신청한 사람) |
+| `post.getAppliedCount()` | 방금 +1 한 신청 인원 |
+
+- 이것도 이벤트 → 확정이 **롤백되면 알림도 가지 않는다.**
+
+**개인 알림 테스트** (admin = 모집글 쓴 사람)
+
+| # | 브라우저 | 하는 일 | 기대 결과 |
+|---|---|---|---|
+| 1 | admin (일반 창) | 게시판 목록 열어 두기 | 🔔 종이 보인다 |
+| 2 | student1 (시크릿) | A 확정 | admin 오른쪽 아래 "홍길동님이 '…A…' 에 신청했습니다. (1/5)", 🔔 1 |
+| 3 | student3 (다른 브라우저) | 같은 시간 | 알림 **없음** (남은 자리만 바뀜) |
+| 4 | 로그인 안 함 | 같은 시간 | 알림 없음, 종도 없음 |
+| 5 | student1 | B, C 확정 중 C 마감 (롤백) | admin에게 알림 **없음** |
+| 6 | admin | admin이 쓴 모집글에 신청 | 알림 없음 (본인) |
+| 7 | admin | 알림 클릭 | 그 모집글 상세로 이동 |
+
+### 13. 놓친 알림 — 저장 + 실시간
+
+- admin이 **창을 닫았을 때** 신청이 들어오면? → 다시 접속해도 알림은 **없다.** 연결된 화면에만 보내고 끝이고, 브로커(메모리)는 받을 사람이 없으면 **버린다.**
+- 실무의 알림 = **저장 + 실시간**
+
+| 단계 | 하는 일 | 오늘 |
+|---|---|---|
+| ① 저장 | `notifications` 테이블에 INSERT (읽음 여부) | ✘ (연습 과제 후보) |
+| **② 실시간** | **접속 중이면 WebSocket으로 바로** | ✔ |
+| ③ 접속 시 | 안 읽은 알림 개수 → 🔔 배지 | ✘ |
+| ④ 밖에서 | 앱 푸시 · 메일 | 14주차 메일 |
+
+### 14. 서버가 여러 대라면 — 외부 브로커
+
+- 오늘의 브로커 `enableSimpleBroker`는 **서버 메모리 안**에 있다.
+- 서버를 2대로 늘리면 : 서버 1에 연결한 admin, 서버 2에서 처리된 신청 → 알림이 **못 간다.**
+- 큰 서비스는 **외부 브로커** (RabbitMQ 등)를 쓴다. → 모든 서버가 한 곳을 거쳐서 모두에게 전달
+
+| 구분 | 단순 브로커 (오늘) | 외부 브로커 (RabbitMQ 등) |
+|---|---|---|
+| 설정 | `enableSimpleBroker(...)` 한 줄 | `enableStompBrokerRelay(...)` + 브로커 서버 |
+| 위치 | 우리 서버 메모리 | 따로 띄운 서버 |
+| 서버 여러 대 | ✘ 서버마다 따로 | ✔ 모두 공유 |
+| 어울리는 곳 | 수업 · 작은 서비스 | 실제 운영 서비스 |
+
+### 15. 자주 나는 오류
+
+- 전체 흐름 다시 확인 : 두 브라우저 → 신청 → 남은 자리 · 알림 → 롤백 시나리오
+
+| 증상 | 원인 → 해결 |
+|---|---|
+| "○ 실시간 연결 안 됨" | 의존성 누락 / `WebSocketConfig` 미복사 / 시큐리티 `/ws` 누락 |
+| 서버가 안 켜짐 : `@EnableWebSocketMessageBroker`를 못 찾음 | `pom.xml` 저장 후 Maven 다시 불러오기 |
+| 남은 자리가 안 바뀜 | 화면은 `/topic/seats`를 구독 — 보내는 주소 오타 확인 |
+| 롤백됐는데 숫자가 줄어든다 | 서비스에서 바로 보내고 있다 → 이벤트 + 리스너 (단계 3) |
+| 이벤트를 던졌는데 아무것도 안 감 | 그 메서드에 **`@Transactional`이 없다** (트랜잭션 없으면 리스너 실행 안 됨) |
+| 알림이 모두에게 간다 | `convertAndSend` → `convertAndSendToUser` |
+| 알림이 아무에게도 안 간다 | 받는 사람(`to`)이 **이름**이 아니라 **로그인 아이디**인지 확인 |
+
+### 16. Git 연동
+
+- `README.md`에 이번 주 진행 상황 기록 (예 : "12주차 WebSocket 실시간 알림 완료")
+- 추가된 파일 add → commit → GitHub로 push
+- 팁 : **`pom.xml`과 `static/js` 파일 2개**(`stomp.umd.min.js`, `realtime.js`)가 커밋에 들어갔는지 확인 → 빠지면 다른 PC에서 실시간이 동작하지 않는다.
+
+### 상태
+
+- `pom.xml`(`spring-boot-starter-websocket`), `SecurityConfig.java`(`/ws` 허용) 반영, 제공 `WebSocketConfig.java` 복사 : 단계 1 완료
+- `dto/SeatMessage.java`, `dto/Notification.java`(record), `service/RealtimeNotifier.java`(`@TransactionalEventListener` 2개) 새로 만듦
+- `EnrollmentService.java` : `ApplicationEventPublisher`로 남은 자리 · 신청 알림 이벤트 발행 (단계 3 · 4)
+- 제공 코드(`stomp.umd.min.js`, `realtime.js`, `board/list` · `detail`, `cart.html`, `board.css`) 복사 완료
+- `mvnw clean compile` 성공 ✅
+- 서버를 켜고 두세 개 브라우저로 위 테스트 표 확인하기 ⬜
